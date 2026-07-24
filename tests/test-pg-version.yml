@@ -1,0 +1,72 @@
+name: Test pg-version input - PostgreSQL version 16
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create migration file for pg-version test
+        run: |
+          mkdir -p tests/fixtures/migrations/pg-version
+          cat > tests/fixtures/migrations/pg-version/001_create_index.sql << 'EOF'
+          CREATE TABLE IF NOT EXISTS products (
+            id SERIAL PRIMARY KEY,
+            name VARCHAR(255) NOT NULL,
+            sku VARCHAR(100) UNIQUE
+          );
+          CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_products_sku ON products (sku);
+          EOF
+
+      - id: action
+        uses: .
+        with:
+          migration-path: tests/fixtures/migrations/pg-version
+          github-token: ${{ github.token }}
+          pg-version: '16'
+          fail-on: 'never'
+
+      - name: Assert risk-level output is set
+        env:
+          RISK_LEVEL: ${{ steps.action.outputs.risk-level }}
+        run: |
+          echo "risk-level: $RISK_LEVEL"
+          if [ -z "$RISK_LEVEL" ]; then
+            echo "FAIL: risk-level output is empty when using pg-version 16"
+            exit 1
+          fi
+          echo "PASS: risk-level is set to $RISK_LEVEL with pg-version 16"
+
+      - name: Assert violations output is set
+        env:
+          VIOLATIONS: ${{ steps.action.outputs.violations }}
+        run: |
+          echo "violations: $VIOLATIONS"
+          if [ -z "$VIOLATIONS" ]; then
+            echo "FAIL: violations output is empty when using pg-version 16"
+            exit 1
+          fi
+          echo "PASS: violations output is set to $VIOLATIONS with pg-version 16"
+
+      - name: Assert risk-level is GREEN (no PR context under workflow_dispatch)
+        env:
+          RISK_LEVEL: ${{ steps.action.outputs.risk-level }}
+        run: |
+          echo "risk-level: $RISK_LEVEL"
+          if [ "$RISK_LEVEL" != "GREEN" ]; then
+            echo "FAIL: expected GREEN (action skips analysis outside PR context), got $RISK_LEVEL"
+            exit 1
+          fi
+          echo "PASS: risk-level is GREEN as expected outside PR context with pg-version 16"
+
+      - name: Assert violations is 0 (no PR context under workflow_dispatch)
+        env:
+          VIOLATIONS: ${{ steps.action.outputs.violations }}
+        run: |
+          echo "violations: $VIOLATIONS"
+          if [ "$VIOLATIONS" != "0" ]; then
+            echo "FAIL: expected 0 violations (action skips analysis outside PR context), got $VIOLATIONS"
+            exit 1
+          fi
+          echo "PASS: violations is 0 as expected outside PR context with pg-version 16"

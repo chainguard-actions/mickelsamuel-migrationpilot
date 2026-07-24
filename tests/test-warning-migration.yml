@@ -1,0 +1,81 @@
+name: Test warning-level migration - action completes without error
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create warning-level migration file
+        run: |
+          mkdir -p tests/fixtures/migrations/warning
+          cat > tests/fixtures/migrations/warning/001_add_not_null_column.sql << 'EOF'
+          ALTER TABLE users ADD COLUMN age INTEGER NOT NULL DEFAULT 0;
+          CREATE INDEX idx_users_age ON users (age);
+          EOF
+
+      - id: action
+        uses: .
+        with:
+          migration-path: tests/fixtures/migrations/warning
+          github-token: ${{ github.token }}
+          pg-version: '17'
+          fail-on: 'never'
+
+      - name: Assert risk-level output is set
+        env:
+          RISK_LEVEL: ${{ steps.action.outputs.risk-level }}
+        run: |
+          echo "risk-level: $RISK_LEVEL"
+          if [ -z "$RISK_LEVEL" ]; then
+            echo "FAIL: risk-level output is empty"
+            exit 1
+          fi
+          echo "PASS: risk-level is set to $RISK_LEVEL"
+
+      - name: Assert violations output is set
+        env:
+          VIOLATIONS: ${{ steps.action.outputs.violations }}
+        run: |
+          echo "violations: $VIOLATIONS"
+          if [ -z "$VIOLATIONS" ]; then
+            echo "FAIL: violations output is empty"
+            exit 1
+          fi
+          echo "PASS: violations output is set to $VIOLATIONS"
+
+      - name: Assert risk-level is GREEN (no PR context under workflow_dispatch)
+        env:
+          RISK_LEVEL: ${{ steps.action.outputs.risk-level }}
+        run: |
+          echo "risk-level: $RISK_LEVEL"
+          # Outside a PR context, the action skips analysis and returns GREEN/0
+          if [ "$RISK_LEVEL" != "GREEN" ]; then
+            echo "FAIL: expected GREEN (action skips analysis outside PR context), got $RISK_LEVEL"
+            exit 1
+          fi
+          echo "PASS: risk-level is GREEN as expected outside PR context"
+
+      - name: Assert violations is a non-negative integer
+        env:
+          VIOLATIONS: ${{ steps.action.outputs.violations }}
+        run: |
+          echo "violations: $VIOLATIONS"
+          # Verify violations count is a non-negative integer
+          if ! echo "$VIOLATIONS" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: violations '$VIOLATIONS' is not a non-negative integer"
+            exit 1
+          fi
+          echo "PASS: violations '$VIOLATIONS' is a valid non-negative integer"
+
+      - name: Assert violations is 0 (no PR context under workflow_dispatch)
+        env:
+          VIOLATIONS: ${{ steps.action.outputs.violations }}
+        run: |
+          echo "violations: $VIOLATIONS"
+          if [ "$VIOLATIONS" != "0" ]; then
+            echo "FAIL: expected 0 violations (action skips analysis outside PR context), got $VIOLATIONS"
+            exit 1
+          fi
+          echo "PASS: violations is 0 as expected outside PR context"

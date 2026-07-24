@@ -1,0 +1,50 @@
+name: Test license-key input (MigrationPilot Pro)
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create safe migration file
+        run: |
+          mkdir -p tests/fixtures/migrations/license
+          cat > tests/fixtures/migrations/license/001_create_table.sql << 'EOF'
+          CREATE TABLE IF NOT EXISTS products (
+            id SERIAL PRIMARY KEY,
+            name VARCHAR(255) NOT NULL,
+            created_at TIMESTAMP DEFAULT NOW()
+          );
+          EOF
+
+      - id: action
+        uses: .
+        with:
+          migration-path: tests/fixtures/migrations/license
+          github-token: ${{ github.token }}
+          license-key: 'MP-TEST-LICENSE-KEY-0000'
+          pg-version: '17'
+          fail-on: 'never'
+
+      - name: Assert risk-level output is present
+        env:
+          RISK_LEVEL: ${{ steps.action.outputs.risk-level }}
+        run: |
+          echo "risk-level: $RISK_LEVEL"
+          if [ -z "$RISK_LEVEL" ]; then
+            echo "FAIL: risk-level output is empty"
+            exit 1
+          fi
+          echo "PASS: risk-level output is present: $RISK_LEVEL"
+
+      - name: Assert violations output is present
+        env:
+          VIOLATIONS: ${{ steps.action.outputs.violations }}
+        run: |
+          echo "violations: $VIOLATIONS"
+          if [ -z "$VIOLATIONS" ]; then
+            echo "FAIL: violations output is empty"
+            exit 1
+          fi
+          echo "PASS: violations output is present: $VIOLATIONS"
