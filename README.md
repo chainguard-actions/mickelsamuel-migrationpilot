@@ -9,6 +9,7 @@ Hardened by [Chainguard](https://www.chainguard.dev) from the upstream action at
 | Version | Tag | Upstream commit |
 |---------|-----|-----------------|
 | v1.1.0 | [`v1.1.0`](https://github.com/chainguard-actions/mickelsamuel-migrationpilot/tree/v1.1.0) | [`237f453`](https://github.com/mickelsamuel/migrationpilot/commit/237f4534952fd4f9a0f312be0ab4f7b24881353d) |
+| v1.4.0 | [`v1.4.0`](https://github.com/chainguard-actions/mickelsamuel-migrationpilot/tree/v1.4.0) | [`fd5aaeb`](https://github.com/mickelsamuel/migrationpilot/commit/fd5aaeb2e20ee774cb90e2c23bd301ac4f5c6209) |
 
 ## Privacy
 
