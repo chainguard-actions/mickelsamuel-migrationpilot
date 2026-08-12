@@ -1,0 +1,38 @@
+name: Test license-key input (backward compatibility)
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create migration file
+        run: |
+          mkdir -p /tmp/migrations
+          cat > /tmp/migrations/001_create_table.sql << 'EOF'
+          CREATE TABLE products (
+            id SERIAL PRIMARY KEY,
+            name VARCHAR(255) NOT NULL
+          );
+          EOF
+
+      - id: action
+        uses: .
+        with:
+          migration-path: /tmp/migrations
+          license-key: 'legacy-key-for-compat-testing'
+          fail-on: 'never'
+
+      - name: Assert outputs are present with license-key input
+        env:
+          RISK: ${{ steps.action.outputs.risk-level }}
+          VIOLATIONS: ${{ steps.action.outputs.violations }}
+        run: |
+          echo "risk-level: $RISK"
+          echo "violations: $VIOLATIONS"
+          if [ -z "$RISK" ]; then
+            echo "FAIL: risk-level output is empty"
+            exit 1
+          fi
+          echo "PASS: action ran successfully with license-key input, risk-level=$RISK"

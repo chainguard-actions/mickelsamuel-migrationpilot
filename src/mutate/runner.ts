@@ -1,0 +1,443 @@
+/**
+ * Guardrail mutation runner (experimental).
+ *
+ * Takes migrations that already pass, generates dangerous near-neighbour
+ * mutants with the operators in ./operators.ts, and re-analyses each one
+ * through the same pipeline the CLI uses (parse → rules → severity overrides
+ * → failOn), with the caller's resolved config.
+ *
+ * A mutant is CAUGHT when the mutation introduces at least one *new* violation
+ * that meets the configured failOn threshold. Comparing against the baseline
+ * matters: if a file already trips a rule, that pre-existing violation would
+ * otherwise mark every mutant as caught and hide real holes.
+ *
+ * A mutant that is not caught is either:
+ *   - a HOLE     — some rule would have caught it, but this config didn't
+ *                  (rule disabled/excluded, severity downgraded, failOn too lax)
+ *   - UNCOVERED  — no built-in rule catches it at all, so no config can fix it
+ */
+
+import { analyzeSQL, AnalysisError } from '../analysis/analyze.js';
+import { parseMigration } from '../parser/parse.js';
+import { applySeverityOverrides } from '../rules/engine.js';
+import type { Rule, RuleViolation, Severity } from '../rules/engine.js';
+import type { MigrationPilotConfig } from '../config/load.js';
+import { allOperators } from './operators.js';
+import type { MutationOperator, MutationTarget } from './operators.js';
+
+export type FailOn = 'critical' | 'warning' | 'never';
+
+export type HoleKind =
+  /** The rule that would catch this is disabled or excluded. */
+  | 'rule-disabled'
+  /** The rule fired, but its severity was overridden below the failOn threshold. */
+  | 'severity-downgraded'
+  /** The rule fired at its normal severity, but failOn doesn't fail the build on it. */
+  | 'fail-on-threshold'
+  /** No built-in rule reports this mutation at all. */
+  | 'not-covered';
+
+export interface HoleReason {
+  kind: HoleKind;
+  /** Human-readable explanation, e.g. 'MP005 is disabled in your config'. */
+  detail: string;
+  /** Rules involved in the diagnosis. */
+  ruleIds: string[];
+}
+
+export interface MutantResult {
+  operatorId: string;
+  operatorName: string;
+  file: string;
+  /** 1-based line of the mutated statement in the original file. */
+  line: number;
+  originalStatement: string;
+  mutatedStatement: string;
+  consequence: string;
+  targetRules: string[];
+  status: 'caught' | 'allowed';
+  /** Violations introduced by the mutation, under the resolved config. */
+  newViolations: RuleViolation[];
+  /** Why the mutant slipped through. Present only when status is 'allowed'. */
+  reason?: HoleReason;
+}
+
+export interface FileMutationReport {
+  file: string;
+  /** False when the file already fails its own config — mutation results are then less meaningful. */
+  baselineClean: boolean;
+  baselineViolations: RuleViolation[];
+  mutants: MutantResult[];
+  /** Set when the file could not be analysed at all. */
+  skipped?: string;
+}
+
+export interface MutationReport {
+  files: FileMutationReport[];
+  totalMutants: number;
+  caught: number;
+  /** Allowed mutants a config change could catch. */
+  holes: MutantResult[];
+  /** Allowed mutants no built-in rule covers. */
+  uncovered: MutantResult[];
+  failOn: FailOn;
+  pgVersion: number;
+  ruleCount: number;
+  operatorCount: number;
+  elapsedMs: number;
+}
+
+export interface MutationRunOptions {
+  /** Loaded config, used for severity overrides. */
+  config: MigrationPilotConfig;
+  /** Rules left after config, license and --exclude filtering. */
+  rules: Rule[];
+  /**
+   * Rules available before config filtering (all rules for the current license).
+   * Used to tell "your config opened this" apart from "no rule covers this".
+   */
+  baseRules: Rule[];
+  pgVersion: number;
+  failOn: FailOn;
+  /** Defaults to every operator. */
+  operators?: MutationOperator[];
+}
+
+interface StatementSpan {
+  /** Offset of the first character of the statement, past leading comments. */
+  start: number;
+  /** Offset just past the last character, before the trailing semicolon. */
+  end: number;
+  sql: string;
+  stmt: Record<string, unknown>;
+  line: number;
+}
+
+/** Run the mutation test over one already-loaded migration file. */
+export async function mutateFile(
+  file: string,
+  sql: string,
+  options: MutationRunOptions,
+): Promise<FileMutationReport> {
+  const operators = options.operators ?? allOperators;
+
+  const parsed = await parseMigration(sql);
+  if (parsed.errors.length > 0) {
+    return {
+      file,
+      baselineClean: false,
+      baselineViolations: [],
+      mutants: [],
+      skipped: `could not parse: ${parsed.errors.map(e => e.message).join('; ')}`,
+    };
+  }
+
+  const spans: StatementSpan[] = parsed.statements.map(s => {
+    const { start, end } = statementSpan(sql, s.stmtLocation, s.stmtLen ?? sql.length - s.stmtLocation);
+    return {
+      start,
+      end,
+      sql: sql.slice(start, end),
+      stmt: s.stmt,
+      line: sql.slice(0, start).split('\n').length,
+    };
+  });
+
+  const baseline = await analyze(sql, file, options.pgVersion, options.rules, options.config);
+  if (!baseline) {
+    return { file, baselineClean: false, baselineViolations: [], mutants: [], skipped: 'could not analyse the original file' };
+  }
+  const baselineBase = await analyze(sql, file, options.pgVersion, options.baseRules);
+
+  const all = spans.map(s => ({ stmt: s.stmt, sql: s.sql }));
+  const mutants: MutantResult[] = [];
+  const seen = new Set<string>();
+
+  for (let i = 0; i < spans.length; i++) {
+    const span = spans[i];
+    if (!span) continue;
+
+    const target: MutationTarget = { stmt: span.stmt, sql: span.sql, index: i, all, pgVersion: options.pgVersion };
+
+    for (const operator of operators) {
+      if (!operator.isApplicable(target)) continue;
+
+      const edit = operator.mutate(target);
+      if (!edit) continue;
+
+      const mutatedSql = applyEdit(sql, spans, i, edit.sql, edit.removes ?? []);
+      if (mutatedSql === sql) continue;
+
+      const key = `${operator.id}\u0000${mutatedSql}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      const mutantAnalysis = await analyze(mutatedSql, file, options.pgVersion, options.rules, options.config);
+      // A mutant that no longer parses could never reach production — discard it.
+      if (!mutantAnalysis) continue;
+
+      const introduced = newViolations(baseline, mutantAnalysis);
+      const caught = introduced.some(v => meetsFailOn(v.severity, options.failOn));
+
+      const result: MutantResult = {
+        operatorId: operator.id,
+        operatorName: operator.name,
+        file,
+        line: span.line,
+        originalStatement: span.sql,
+        mutatedStatement: edit.sql === '' ? '(statement removed)' : edit.sql,
+        consequence: operator.consequence,
+        targetRules: operator.targetRules,
+        status: caught ? 'caught' : 'allowed',
+        newViolations: introduced,
+      };
+
+      if (!caught) {
+        const mutantBase = baselineBase
+          ? await analyze(mutatedSql, file, options.pgVersion, options.baseRules)
+          : null;
+        const introducedBase = mutantBase && baselineBase ? newViolations(baselineBase, mutantBase) : [];
+        result.reason = diagnose(introduced, introducedBase, options);
+      }
+
+      mutants.push(result);
+    }
+  }
+
+  return {
+    file,
+    baselineClean: !baseline.some(v => meetsFailOn(v.severity, options.failOn)),
+    baselineViolations: baseline,
+    mutants,
+  };
+}
+
+/** Run the mutation test over several files and aggregate the results. */
+export async function runMutationTest(
+  files: Array<{ file: string; sql: string }>,
+  options: MutationRunOptions,
+): Promise<MutationReport> {
+  const started = performance.now();
+  const reports: FileMutationReport[] = [];
+
+  for (const entry of files) {
+    reports.push(await mutateFile(entry.file, entry.sql, options));
+  }
+
+  const mutants = reports.flatMap(r => r.mutants);
+  const allowed = mutants.filter(m => m.status === 'allowed');
+
+  return {
+    files: reports,
+    totalMutants: mutants.length,
+    caught: mutants.filter(m => m.status === 'caught').length,
+    holes: allowed.filter(m => m.reason?.kind !== 'not-covered'),
+    uncovered: allowed.filter(m => m.reason?.kind === 'not-covered'),
+    failOn: options.failOn,
+    pgVersion: options.pgVersion,
+    ruleCount: options.rules.length,
+    operatorCount: (options.operators ?? allOperators).length,
+    elapsedMs: performance.now() - started,
+  };
+}
+
+/** Whether a violation of this severity fails the build under `failOn`. */
+export function meetsFailOn(severity: Severity, failOn: FailOn): boolean {
+  if (failOn === 'never') return false;
+  if (failOn === 'warning') return true;
+  return severity === 'critical';
+}
+
+/**
+ * Violations present in the mutant but not the baseline, compared per rule so a
+ * pre-existing violation of the same rule doesn't mask a newly introduced one.
+ */
+export function newViolations(baseline: RuleViolation[], mutant: RuleViolation[]): RuleViolation[] {
+  const remaining = new Map<string, number>();
+  for (const v of baseline) {
+    remaining.set(v.ruleId, (remaining.get(v.ruleId) ?? 0) + 1);
+  }
+
+  const introduced: RuleViolation[] = [];
+  for (const v of mutant) {
+    const count = remaining.get(v.ruleId) ?? 0;
+    if (count > 0) {
+      remaining.set(v.ruleId, count - 1);
+      continue;
+    }
+    introduced.push(v);
+  }
+  return introduced;
+}
+
+/**
+ * Work out which knob let the mutant through, by comparing what the resolved
+ * config reported against what the unconfigured rule set reports.
+ */
+function diagnose(
+  introduced: RuleViolation[],
+  introducedBase: RuleViolation[],
+  options: MutationRunOptions,
+): HoleReason {
+  if (introducedBase.length === 0) {
+    return {
+      kind: 'not-covered',
+      detail: 'no built-in rule reports this change',
+      ruleIds: [],
+    };
+  }
+
+  const baseRuleIds = [...new Set(introducedBase.map(v => v.ruleId))];
+  const enabled = new Set(options.rules.map(r => r.id));
+  const disabled = baseRuleIds.filter(id => !enabled.has(id));
+
+  if (disabled.length > 0) {
+    return {
+      kind: 'rule-disabled',
+      detail: `${disabled.join(', ')} ${disabled.length === 1 ? 'is' : 'are'} disabled or excluded, so nothing reports this`,
+      ruleIds: disabled,
+    };
+  }
+
+  if (options.failOn === 'never') {
+    return {
+      kind: 'fail-on-threshold',
+      detail: `${baseRuleIds.join(', ')} fired, but failOn is set to "never" so the build passes anyway`,
+      ruleIds: baseRuleIds,
+    };
+  }
+
+  // The rule ran. Did an override drop it below the threshold?
+  const defaultSeverity = new Map(introducedBase.map(v => [v.ruleId, v.severity]));
+  const resolvedSeverity = new Map(introduced.map(v => [v.ruleId, v.severity]));
+
+  const downgraded = baseRuleIds.filter(id => {
+    const original = defaultSeverity.get(id);
+    const resolved = resolvedSeverity.get(id);
+    if (!original || !resolved) return false;
+    return meetsFailOn(original, options.failOn) && !meetsFailOn(resolved, options.failOn);
+  });
+
+  if (downgraded.length > 0) {
+    return {
+      kind: 'severity-downgraded',
+      detail: `${downgraded.join(', ')} ${downgraded.length === 1 ? 'was' : 'were'} downgraded to warning, below your failOn: ${options.failOn}`,
+      ruleIds: downgraded,
+    };
+  }
+
+  return {
+    kind: 'fail-on-threshold',
+    detail: `${baseRuleIds.join(', ')} only reports a warning and failOn is "${options.failOn}"`,
+    ruleIds: baseRuleIds,
+  };
+}
+
+/** Analyse SQL with the given rules, returning null when it doesn't parse. */
+async function analyze(
+  sql: string,
+  file: string,
+  pgVersion: number,
+  rules: Rule[],
+  config?: MigrationPilotConfig,
+): Promise<RuleViolation[] | null> {
+  try {
+    const analysis = await analyzeSQL(sql, file, pgVersion, rules);
+    return config ? applySeverityOverrides(analysis.violations, config.rules) : analysis.violations;
+  } catch (err) {
+    if (err instanceof AnalysisError) return null;
+    throw err;
+  }
+}
+
+/**
+ * Narrow a parsed statement's span to the statement itself: libpg-query reports
+ * a range that starts at the end of the previous statement, so it carries any
+ * leading whitespace and comments with it.
+ */
+export function statementSpan(sql: string, location: number, length: number): { start: number; end: number } {
+  const hardEnd = Math.min(location + length, sql.length);
+  let start = location;
+
+  while (start < hardEnd) {
+    const ch = sql[start];
+    if (ch === undefined) break;
+
+    if (/\s/.test(ch)) {
+      start++;
+      continue;
+    }
+    if (ch === '-' && sql[start + 1] === '-') {
+      const newline = sql.indexOf('\n', start);
+      if (newline === -1 || newline >= hardEnd) {
+        start = hardEnd;
+        break;
+      }
+      start = newline + 1;
+      continue;
+    }
+    if (ch === '/' && sql[start + 1] === '*') {
+      const close = sql.indexOf('*/', start + 2);
+      if (close === -1 || close + 2 > hardEnd) {
+        start = hardEnd;
+        break;
+      }
+      start = close + 2;
+      continue;
+    }
+    break;
+  }
+
+  let end = hardEnd;
+  while (end > start && /\s/.test(sql[end - 1] ?? '')) end--;
+
+  return { start, end };
+}
+
+/**
+ * Replace statement `index` with `replacement` and delete the statements in
+ * `removes`. Deleting a statement also takes its trailing semicolon and line
+ * break so the result stays readable SQL.
+ */
+export function applyEdit(
+  sql: string,
+  spans: StatementSpan[],
+  index: number,
+  replacement: string,
+  removes: number[],
+): string {
+  const edits: Array<{ start: number; end: number; text: string }> = [];
+
+  const target = spans[index];
+  if (!target) return sql;
+
+  if (replacement === '') {
+    edits.push({ start: target.start, end: deletionEnd(sql, target.end), text: '' });
+  } else if (replacement !== target.sql) {
+    edits.push({ start: target.start, end: target.end, text: replacement });
+  }
+
+  for (const i of removes) {
+    const span = spans[i];
+    if (!span || i === index) continue;
+    edits.push({ start: span.start, end: deletionEnd(sql, span.end), text: '' });
+  }
+
+  if (edits.length === 0) return sql;
+
+  let result = sql;
+  for (const e of edits.sort((a, b) => b.start - a.start)) {
+    result = result.slice(0, e.start) + e.text + result.slice(e.end);
+  }
+  return result;
+}
+
+/** Extend a statement's end past its trailing semicolon and line break. */
+function deletionEnd(sql: string, end: number): number {
+  let cursor = end;
+  while (cursor < sql.length && /[ \t]/.test(sql[cursor] ?? '')) cursor++;
+  if (sql[cursor] === ';') cursor++;
+  while (cursor < sql.length && /[ \t\r]/.test(sql[cursor] ?? '')) cursor++;
+  if (sql[cursor] === '\n') cursor++;
+  return cursor;
+}

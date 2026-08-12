@@ -1,0 +1,44 @@
+name: Test fail-on never option
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create migration directory with a SQL file
+        run: |
+          mkdir -p migrations
+          cat > migrations/001_add_index.sql << 'EOF'
+          CREATE INDEX idx_users_email ON users(email);
+          EOF
+
+      - id: action
+        uses: .
+        with:
+          migration-path: 'migrations/**/*.sql'
+          fail-on: 'never'
+          pg-version: '17'
+
+      - name: Assert risk-level output is set
+        env:
+          RISK: ${{ steps.action.outputs.risk-level }}
+        run: |
+          echo "risk-level: $RISK"
+          if [ "$RISK" != "GREEN" ]; then
+            echo "FAIL: expected risk-level=GREEN (non-PR context) but got '$RISK'"
+            exit 1
+          fi
+          echo "PASS: risk-level is GREEN"
+
+      - name: Assert violations output is 0
+        env:
+          VIOLATIONS: ${{ steps.action.outputs.violations }}
+        run: |
+          echo "violations: $VIOLATIONS"
+          if [ "$VIOLATIONS" != "0" ]; then
+            echo "FAIL: expected violations=0 (non-PR context) but got '$VIOLATIONS'"
+            exit 1
+          fi
+          echo "PASS: violations is 0"

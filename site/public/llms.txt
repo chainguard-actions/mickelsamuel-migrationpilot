@@ -1,0 +1,207 @@
+# MigrationPilot
+
+> Static analysis for PostgreSQL schema migrations. Tells you exactly what a migration
+> will do to production — which lock each statement takes, what it blocks, and how risky
+> it is — before you merge. Never connects to your database unless you ask it to.
+
+MIT licensed. 112 safety rules (MP001–MP112), all free. Written in TypeScript, parses SQL
+with libpg-query (the real PostgreSQL parser compiled to WASM), not regex.
+
+## Install and run
+
+No install step needed:
+
+    npx migrationpilot analyze migrations/*.sql
+
+Other common invocations:
+
+    npx migrationpilot analyze migrations/ --fix          # auto-fix in place (20 rules)
+    npx migrationpilot analyze migrations/ --fix --dry-run
+    npx migrationpilot analyze file.sql --pg-version 18   # target a PG version (9–20)
+    npx migrationpilot analyze file.sql --format json
+    npx migrationpilot analyze file.sql --database-url "$DATABASE_URL"  # production context
+    cat migration.sql | npx migrationpilot analyze --stdin
+    npx migrationpilot list-rules --json
+
+Requires Node.js 22+. Add `--offline` for air-gapped environments (no network calls).
+
+## Beyond per-file linting
+
+`check` — analyze a whole migration directory as one deploy. Cross-file sequence analysis
+runs by default and has its own finding IDs so they never collide with the MP rules:
+SQ001 cumulative lock budget on one table, SQ002 one hot table locked by several files,
+SQ003 an index or constraint built and then rewritten away, SQ004 a file that uses an
+object a later file creates, SQ005 the blast-radius summary.
+
+    npx migrationpilot check ./migrations
+    npx migrationpilot check ./migrations --fail-on-sequence --lock-budget 30
+
+`simulate` — execute the migration against an ephemeral in-process PostgreSQL and report
+what actually happened, rather than what static analysis predicts.
+
+    npx migrationpilot simulate migrations/003_add_index.sql
+
+`mutation-test` — test the guardrail itself. Mutates migrations that currently pass into
+dangerous near-neighbours and reports which ones your config would still let through, so
+you can see where your rules are not actually protecting you. Experimental.
+
+    npx migrationpilot mutation-test ./migrations
+
+`plan-fix` — emit a step-by-step expand-contract plan for the violations that need one
+(the multi-migration ones auto-fix cannot do in place). `plan` shows a visual execution
+plan for a single file.
+
+    npx migrationpilot plan-fix migrations/004_change_type.sql
+
+`precommit` / `hook` — `hook install` writes a git pre-commit hook; `precommit` is the
+entry point for the pre-commit framework and takes a list of files.
+
+    npx migrationpilot hook install
+
+Playground — paste SQL and see the violations in the browser, no install:
+https://migrationpilot.dev/playground
+
+## MCP server
+
+MigrationPilot ships an MCP server so an AI assistant can analyze migrations directly.
+Listed in the official MCP Registry as `io.github.mickelsamuel/migrationpilot`.
+
+    {
+      "mcpServers": {
+        "migrationpilot": {
+          "command": "npx",
+          "args": ["-y", "migrationpilot-mcp"]
+        }
+      }
+    }
+
+## Output formats
+
+`text` (default, human-readable), `json` (versioned schema), `sarif` (SARIF v2.1.0 for
+GitHub Code Scanning), `markdown` (PR comments), `quiet` (one gcc-style line per
+violation), `verbose` (per-statement PASS/FAIL for every rule).
+
+Select with `--format <name>`. JSON schema: https://migrationpilot.dev/schemas/
+
+## Rules
+
+112 rules, covering:
+
+- Lock safety — missing CONCURRENTLY, table rewrites, ACCESS EXCLUSIVE holds, triggers
+  and tablespace moves that block writes for the length of a copy
+- Data safety — DROP TABLE/SCHEMA/DATABASE, TRUNCATE CASCADE, type narrowing, renames
+  that break running queries, DML inside a DDL migration
+- Constraints and keys — NOT VALID patterns for FK and CHECK, NOT NULL without a default,
+  foreign keys with no explicit ON DELETE, dropping a constraint-backing index
+- Types and schema style — VARCHAR vs TEXT, TIMESTAMP vs TIMESTAMPTZ, identity vs serial,
+  missing primary key, index naming, TOAST compression
+- Partitioning — indexing a partitioned parent, ATTACH without a matching CHECK,
+  default-partition growth, DDL fan-out across partitions
+- Privileges and security — GRANT widening, privilege changes buried in schema diffs,
+  SECURITY DEFINER without a pinned search_path, RLS enabled without a policy
+- Extension awareness — TimescaleDB hypertables and columnstore, Citus distributed
+  tables, pg_partman-managed parents, pgvector index build parameters
+- PostgreSQL 18 — MP081 (native NOT NULL constraint added NOT VALID), MP082 (NOT
+  ENFORCED), MP083 (FK collation)
+
+Of the 112, 97 run offline and 15 read live catalog state — table sizes, write traffic,
+replication, installed extensions — so they need `--database-url`: MP013, MP014, MP019,
+MP100, MP101, MP102, MP103, MP104, MP105, MP106, MP107, MP108, MP110, MP111, MP112.
+Production context is free and unmetered, like every other rule: there is no paid tier of
+the engine, and these rules simply have nothing to read without a connection. The
+connection is read-only: SELECT against pg_catalog, the pg_stat_* views, and the
+extensions' own metadata tables. It never reads your data.
+
+20 rules are auto-fixable: MP001, MP004, MP005, MP009, MP012, MP020, MP021, MP023, MP025,
+MP030, MP033, MP037, MP038, MP039, MP040, MP041, MP042, MP046, MP074, MP077.
+
+Searchable index of all 112: https://migrationpilot.dev/rules
+Rule reference (prose): https://migrationpilot.dev/docs/rules
+One page per rule: https://migrationpilot.dev/rules/mp001 … /rules/mp112
+
+## The Postgres Migration Safety Handbook
+
+https://migrationpilot.dev/handbook — 20 entries on the schema changes that take
+production down. Framework-neutral and not a product manual: it describes PostgreSQL
+behaviour, and the note on which MigrationPilot rule catches each problem is one short
+section you can ignore.
+
+Every entry states the lock mode the statement takes and cites 13.3 Explicit Locking or
+the command reference for it, pins version claims to the release-notes item that changed
+the behaviour, and ends with a copy-paste lab that starts a throwaway PostgreSQL in
+Docker, reproduces the block or the error, prints pg_locks or pg_stat_activity, and
+cleans up — under two minutes, no dependencies beyond Docker. The verified output of each
+lab is printed in the entry.
+
+Incidents are named, dated public postmortems that were fetched while writing the entry;
+where none exists the entry says "No public postmortem located" rather than inventing
+one. Confidence is graded High (manual + lab + named incident) or Medium (manual + lab);
+there is no Low. Each entry carries last_verified and the PostgreSQL patch release it was
+checked against.
+
+    MPH-001  /handbook/non-concurrent-index-creation          CREATE INDEX takes SHARE — blocks writes, not reads
+    MPH-002  /handbook/lock-timeout-and-the-lock-queue         the lock queue: one waiter blocks everything behind it
+    MPH-003  /handbook/set-not-null-full-scan                  SET NOT NULL scans the table under ACCESS EXCLUSIVE
+    MPH-004  /handbook/check-then-not-null                     the CHECK NOT VALID then VALIDATE pattern
+    MPH-005  /handbook/pg18-not-null-not-valid                 PostgreSQL 18's NOT NULL NOT VALID
+    MPH-006  /handbook/volatile-defaults-and-rewrites          constant defaults are free since PG 11; volatile ones rewrite
+    MPH-007  /handbook/alter-column-type-rewrite               ALTER COLUMN TYPE rewrites, with no CONCURRENTLY
+    MPH-008  /handbook/foreign-key-without-not-valid           ADD FOREIGN KEY takes SHARE ROW EXCLUSIVE on two tables
+    MPH-009  /handbook/unique-constraint-scan                  ADD CONSTRAINT UNIQUE builds the index under a full lock
+    MPH-010  /handbook/enum-add-value-in-transaction           ALTER TYPE ADD VALUE and transaction blocks
+    MPH-011  /handbook/concurrently-inside-transaction         CONCURRENTLY cannot run inside a transaction block
+    MPH-012  /handbook/invalid-index-after-failed-concurrently what a failed CONCURRENTLY leaves in the catalog
+    MPH-013  /handbook/drop-column-blast-radius                DROP COLUMN is fast, which is the problem
+    MPH-014  /handbook/drop-table-blast-radius                 DROP TABLE and CASCADE: the one with no recovery path
+    MPH-015  /handbook/rename-breakage                         RENAME is instant, reversible, and still an outage
+    MPH-016  /handbook/long-transactions-vs-ddl                what your DDL gets blocked by
+    MPH-017  /handbook/replication-breaking-ops                dropping a primary key, disabling triggers
+    MPH-018  /handbook/unbatched-backfills                     one big UPDATE: WAL, replica lag, bloat
+    MPH-019  /handbook/partition-attach-detach                 ATTACH/DETACH locks changed across major versions
+    MPH-020  /handbook/multi-statement-ddl-lock-accumulation   locks are held to COMMIT, never released early
+
+Source markdown: https://github.com/mickelsamuel/migrationpilot/tree/main/docs/handbook
+`node docs/handbook/validate.mjs` checks every entry against that standard in CI.
+
+## Benchmark
+
+https://migrationpilot.dev/benchmark — MigrationPilot against Squawk 2.62.0 and pgfence
+0.6.1 on 56 labelled migrations, generated by `node bench/run.mjs`. MigrationPilot names
+30/33 hazards (90.9%) with 1/17 false positives; Squawk 20/33 with 1/17; pgfence 25/33
+with 3/17. The corpus is built from the handbook entries above, including a safe/
+directory of the handbook's own safe SQL as false-positive bait, and a context/ directory
+of real hazards that are harmless at the stated scale and are scored in neither
+direction. The page lists every miss by file name. Raw results:
+https://github.com/mickelsamuel/migrationpilot/blob/main/bench/RESULTS.md
+
+## GitHub Action
+
+    - uses: mickelsamuel/migrationpilot@v1
+      with:
+        migration-path: "migrations/*.sql"
+        fail-on: critical
+
+Posts a report as a PR comment, emits inline annotations and a Job Summary, and can
+upload SARIF to GitHub Code Scanning.
+
+## Pricing
+
+The engine is free — all 112 rules, unlimited analyses, auto-fix, every integration.
+The Org plan ($499/year per organization, up to 10 repos and 25 developers) adds
+centrally-signed policy the CLI enforces, required checks, waivers with owner/reason/expiry,
+cross-repo audit history, and enforcement reporting. Enterprise adds SSO and air-gapped
+deployment. Contact: hello@migrationpilot.dev
+
+## Key links
+
+- Docs: https://migrationpilot.dev/docs
+- Quick start: https://migrationpilot.dev/docs/quick-start
+- Configuration (.migrationpilotrc.yml, 5 presets): https://migrationpilot.dev/docs/configuration
+- CLI reference: https://migrationpilot.dev/docs/cli-reference
+- GitHub Action: https://migrationpilot.dev/docs/github-action
+- CI integration: https://migrationpilot.dev/docs/ci-integration
+- Programmatic API: https://migrationpilot.dev/docs/programmatic-api
+- Playground (paste SQL, see violations): https://migrationpilot.dev/playground
+- Changelog: https://migrationpilot.dev/changelog
+- Source: https://github.com/mickelsamuel/migrationpilot
+- npm: https://www.npmjs.com/package/migrationpilot

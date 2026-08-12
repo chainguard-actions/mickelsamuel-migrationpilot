@@ -1,0 +1,786 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://migrationpilot.dev/schemas/report-v1.json",
+  "title": "MigrationPilot Report Schema v1",
+  "description": "JSON schema for MigrationPilot analysis reports (single file or multi-file)",
+  "oneOf": [
+    {
+      "$ref": "#/definitions/JsonReport"
+    },
+    {
+      "$ref": "#/definitions/JsonMultiReport"
+    }
+  ],
+  "definitions": {
+    "JsonViolation": {
+      "type": "object",
+      "title": "Rule Violation",
+      "description": "A single rule violation found in analyzed SQL",
+      "required": [
+        "ruleId",
+        "ruleName",
+        "severity",
+        "message",
+        "line"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "ruleId": {
+          "type": "string",
+          "title": "Rule ID",
+          "description": "Unique identifier for the rule (e.g., 'MP001')",
+          "pattern": "^MP[0-9]{3}$"
+        },
+        "ruleName": {
+          "type": "string",
+          "title": "Rule Name",
+          "description": "Human-readable rule name",
+          "minLength": 1
+        },
+        "severity": {
+          "type": "string",
+          "title": "Severity Level",
+          "enum": [
+            "critical",
+            "warning"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "title": "Violation Message",
+          "description": "Description of what was violated",
+          "minLength": 1
+        },
+        "line": {
+          "type": "integer",
+          "title": "Line Number",
+          "description": "Line number in the SQL file where violation was found",
+          "minimum": 1
+        },
+        "safeAlternative": {
+          "type": "string",
+          "title": "Safe Alternative",
+          "description": "Optional suggested safe alternative SQL"
+        },
+        "whyItMatters": {
+          "type": "string",
+          "title": "Why It Matters",
+          "description": "Optional explanation of real-world impact"
+        },
+        "docsUrl": {
+          "type": "string",
+          "title": "Documentation URL",
+          "description": "Optional URL to detailed rule documentation",
+          "format": "uri"
+        }
+      }
+    },
+    "JsonStatement": {
+      "type": "object",
+      "title": "Analyzed SQL Statement",
+      "description": "A SQL statement that was analyzed with lock and risk information",
+      "required": [
+        "sql",
+        "lockType",
+        "blocksReads",
+        "blocksWrites",
+        "riskLevel",
+        "riskScore"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "sql": {
+          "type": "string",
+          "title": "SQL Text",
+          "description": "The SQL statement text",
+          "minLength": 1
+        },
+        "lockType": {
+          "type": "string",
+          "title": "Lock Type",
+          "description": "PostgreSQL lock type acquired by this statement",
+          "minLength": 1
+        },
+        "blocksReads": {
+          "type": "boolean",
+          "title": "Blocks Reads",
+          "description": "Whether this lock type blocks SELECT queries"
+        },
+        "blocksWrites": {
+          "type": "boolean",
+          "title": "Blocks Writes",
+          "description": "Whether this lock type blocks INSERT/UPDATE/DELETE queries"
+        },
+        "riskLevel": {
+          "type": "string",
+          "title": "Risk Level",
+          "enum": [
+            "GREEN",
+            "YELLOW",
+            "RED"
+          ]
+        },
+        "riskScore": {
+          "type": "number",
+          "title": "Risk Score",
+          "description": "Numerical risk score from 0-100",
+          "minimum": 0,
+          "maximum": 100
+        }
+      }
+    },
+    "RiskFactor": {
+      "type": "object",
+      "title": "Risk Scoring Factor",
+      "description": "A component that contributed to the overall risk score",
+      "required": [
+        "name",
+        "value",
+        "weight",
+        "detail"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "title": "Factor Name",
+          "description": "Name of the risk factor (e.g., 'Lock Severity', 'Table Size')",
+          "minLength": 1
+        },
+        "value": {
+          "type": "number",
+          "title": "Factor Value",
+          "description": "Numerical value of this factor"
+        },
+        "weight": {
+          "type": "number",
+          "title": "Factor Weight",
+          "description": "Weight in overall risk calculation (0-100)"
+        },
+        "detail": {
+          "type": "string",
+          "title": "Detail",
+          "description": "Human-readable explanation of this factor",
+          "minLength": 1
+        }
+      }
+    },
+    "JsonSummary": {
+      "type": "object",
+      "title": "Analysis Summary",
+      "description": "Summary statistics for the analysis",
+      "required": [
+        "totalStatements",
+        "totalViolations",
+        "criticalCount",
+        "warningCount"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "totalStatements": {
+          "type": "integer",
+          "title": "Total Statements",
+          "description": "Total number of SQL statements analyzed",
+          "minimum": 0
+        },
+        "totalViolations": {
+          "type": "integer",
+          "title": "Total Violations",
+          "description": "Total number of rule violations found",
+          "minimum": 0
+        },
+        "criticalCount": {
+          "type": "integer",
+          "title": "Critical Violations",
+          "description": "Number of critical severity violations",
+          "minimum": 0
+        },
+        "warningCount": {
+          "type": "integer",
+          "title": "Warning Violations",
+          "description": "Number of warning severity violations",
+          "minimum": 0
+        }
+      }
+    },
+    "CompanionDown": {
+      "type": "object",
+      "title": "Companion Down Migration",
+      "description": "Whether a reverse migration ships alongside this one. Resolved from the filesystem by the CLI, so it is absent from reports built without one (the browser playground, for instance)",
+      "required": [
+        "present"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "present": {
+          "type": "boolean",
+          "title": "Present",
+          "description": "Whether a companion down migration was found"
+        },
+        "path": {
+          "type": "string",
+          "title": "Down File Path",
+          "description": "Path to the down migration, when it is a separate file"
+        },
+        "kind": {
+          "type": "string",
+          "title": "Companion Kind",
+          "description": "'file' for a sibling down migration, 'inline' for a down section in this file",
+          "enum": [
+            "file",
+            "inline"
+          ]
+        }
+      }
+    },
+    "ReversibilityReason": {
+      "type": "object",
+      "title": "Reversibility Reason",
+      "description": "One statement that cannot be undone exactly. Cleanly reversible statements are not listed",
+      "required": [
+        "grade",
+        "statement",
+        "reason"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "grade": {
+          "type": "string",
+          "title": "Statement Grade",
+          "description": "The grade this statement contributes",
+          "enum": [
+            "YELLOW",
+            "RED"
+          ]
+        },
+        "statement": {
+          "type": "string",
+          "title": "Statement",
+          "description": "The statement, collapsed to a single line and truncated for display",
+          "minLength": 1
+        },
+        "reason": {
+          "type": "string",
+          "title": "Reason",
+          "description": "Why the reversal is imperfect",
+          "minLength": 1
+        },
+        "line": {
+          "type": "integer",
+          "title": "Line Number",
+          "description": "Line in the migration file, when known",
+          "minimum": 1
+        }
+      }
+    },
+    "ReversibilityAssessment": {
+      "type": "object",
+      "title": "Reversibility Assessment",
+      "description": "How reversible the migration is: GREEN every statement has an exact inverse, YELLOW reversible with care, RED undoing it cannot bring the data back",
+      "required": [
+        "grade",
+        "counts",
+        "reasons"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "grade": {
+          "type": "string",
+          "title": "Rollback Grade",
+          "enum": [
+            "GREEN",
+            "YELLOW",
+            "RED"
+          ]
+        },
+        "counts": {
+          "type": "object",
+          "title": "Statement Counts",
+          "description": "How many statements fell into each reversibility class",
+          "required": [
+            "clean",
+            "care",
+            "irreversible"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "clean": {
+              "type": "integer",
+              "title": "Cleanly Reversible",
+              "minimum": 0
+            },
+            "care": {
+              "type": "integer",
+              "title": "Reversible With Care",
+              "minimum": 0
+            },
+            "irreversible": {
+              "type": "integer",
+              "title": "Irreversible",
+              "minimum": 0
+            }
+          }
+        },
+        "reasons": {
+          "type": "array",
+          "title": "Reasons",
+          "description": "One entry per statement that is not cleanly reversible, in file order",
+          "items": {
+            "$ref": "#/definitions/ReversibilityReason"
+          }
+        },
+        "companionDown": {
+          "$ref": "#/definitions/CompanionDown"
+        }
+      }
+    },
+    "JsonReport": {
+      "type": "object",
+      "title": "Single File Report",
+      "description": "Analysis report for a single SQL migration file",
+      "required": [
+        "$schema",
+        "version",
+        "file",
+        "riskLevel",
+        "riskScore",
+        "riskFactors",
+        "statements",
+        "violations",
+        "summary"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "$schema": {
+          "type": "string",
+          "title": "Schema URI",
+          "description": "JSON Schema version URI",
+          "const": "https://migrationpilot.dev/schemas/report-v1.json"
+        },
+        "version": {
+          "type": "string",
+          "title": "Report Version",
+          "description": "Version of the report format",
+          "pattern": "^\\d+\\.\\d+\\.\\d+$"
+        },
+        "file": {
+          "type": "string",
+          "title": "File Path",
+          "description": "Path to the analyzed SQL file",
+          "minLength": 1
+        },
+        "riskLevel": {
+          "type": "string",
+          "title": "Overall Risk Level",
+          "enum": [
+            "GREEN",
+            "YELLOW",
+            "RED"
+          ]
+        },
+        "riskScore": {
+          "type": "number",
+          "title": "Overall Risk Score",
+          "description": "Numerical risk score from 0-100",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "riskFactors": {
+          "type": "array",
+          "title": "Risk Factors",
+          "description": "Array of factors that contributed to the risk score",
+          "items": {
+            "$ref": "#/definitions/RiskFactor"
+          }
+        },
+        "statements": {
+          "type": "array",
+          "title": "Analyzed Statements",
+          "description": "All SQL statements that were analyzed",
+          "items": {
+            "$ref": "#/definitions/JsonStatement"
+          }
+        },
+        "violations": {
+          "type": "array",
+          "title": "Rule Violations",
+          "description": "All rule violations found",
+          "items": {
+            "$ref": "#/definitions/JsonViolation"
+          }
+        },
+        "summary": {
+          "$ref": "#/definitions/JsonSummary"
+        },
+        "reversibility": {
+          "title": "Reversibility",
+          "description": "Rollback grade for this file. Added in 1.6.0 — absent from reports built before it. Wrapped in allOf because draft-07 ignores keywords sitting beside a $ref",
+          "allOf": [
+            {
+              "$ref": "#/definitions/ReversibilityAssessment"
+            }
+          ]
+        }
+      }
+    },
+    "SequenceFinding": {
+      "type": "object",
+      "title": "Sequence Finding",
+      "description": "A finding that only exists across files — SQ001 through SQ004",
+      "required": [
+        "id",
+        "name",
+        "severity",
+        "message",
+        "files"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "Finding ID",
+          "enum": [
+            "SQ001",
+            "SQ002",
+            "SQ003",
+            "SQ004"
+          ]
+        },
+        "name": {
+          "type": "string",
+          "title": "Finding Name",
+          "description": "Stable kebab-case name, mirroring how MP rules are named",
+          "minLength": 1
+        },
+        "severity": {
+          "type": "string",
+          "title": "Severity Level",
+          "enum": [
+            "critical",
+            "warning"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "title": "Finding Message",
+          "minLength": 1
+        },
+        "files": {
+          "type": "array",
+          "title": "Files Involved",
+          "description": "Files involved, in sequence order",
+          "items": {
+            "type": "string"
+          }
+        },
+        "table": {
+          "type": "string",
+          "title": "Table",
+          "description": "Table the finding is about, when it is about one table"
+        },
+        "detail": {
+          "type": "string",
+          "title": "Detail",
+          "description": "Supporting numbers — the evidence behind the message"
+        }
+      }
+    },
+    "TableBlastRadius": {
+      "type": "object",
+      "title": "Per-Table Blast Radius",
+      "description": "What the whole sequence does to one table",
+      "required": [
+        "table",
+        "files",
+        "statements",
+        "blockingStatements",
+        "worstLock",
+        "worstLockLongHeld",
+        "worstLockFile",
+        "estimatedLockSeconds",
+        "operations"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "table": {
+          "type": "string",
+          "title": "Table Name",
+          "minLength": 1
+        },
+        "files": {
+          "type": "array",
+          "title": "Files",
+          "description": "Files that touch this table, in sequence order",
+          "items": {
+            "type": "string"
+          }
+        },
+        "statements": {
+          "type": "integer",
+          "title": "Statements",
+          "description": "Statements across the sequence that touch it",
+          "minimum": 0
+        },
+        "blockingStatements": {
+          "type": "integer",
+          "title": "Blocking Statements",
+          "description": "Statements that block reads or writes",
+          "minimum": 0
+        },
+        "worstLock": {
+          "type": "string",
+          "title": "Worst Lock",
+          "enum": [
+            "ACCESS EXCLUSIVE",
+            "SHARE",
+            "SHARE UPDATE EXCLUSIVE",
+            "SHARE ROW EXCLUSIVE",
+            "ROW EXCLUSIVE",
+            "ROW SHARE",
+            "ACCESS SHARE"
+          ]
+        },
+        "worstLockLongHeld": {
+          "type": "boolean",
+          "title": "Worst Lock Long Held",
+          "description": "Whether the worst lock is held for a scan or rewrite rather than momentarily"
+        },
+        "worstLockFile": {
+          "type": "string",
+          "title": "Worst Lock File",
+          "description": "File holding the worst lock"
+        },
+        "estimatedLockSeconds": {
+          "type": "number",
+          "title": "Estimated Lock Seconds",
+          "description": "Summed blocking lock time across the sequence, in seconds",
+          "minimum": 0
+        },
+        "operations": {
+          "type": "array",
+          "title": "Operations",
+          "description": "Distinct operations applied, e.g. 'ALTER TABLE', 'CREATE INDEX'",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "SequenceReport": {
+      "type": "object",
+      "title": "Cross-File Sequence Report",
+      "description": "Findings that only exist across a run of migrations, plus the SQ005 blast-radius summary",
+      "required": [
+        "fileCount",
+        "files",
+        "statementCount",
+        "thresholds",
+        "findings",
+        "blastRadius",
+        "summary",
+        "parseErrors"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "fileCount": {
+          "type": "integer",
+          "title": "File Count",
+          "minimum": 0
+        },
+        "files": {
+          "type": "array",
+          "title": "Files",
+          "description": "File names in sequence order",
+          "items": {
+            "type": "string"
+          }
+        },
+        "statementCount": {
+          "type": "integer",
+          "title": "Statement Count",
+          "minimum": 0
+        },
+        "thresholds": {
+          "type": "object",
+          "title": "Thresholds",
+          "description": "Thresholds the run used, echoed so a report explains its own numbers",
+          "required": [
+            "lockBudgetSeconds",
+            "hotTableFileThreshold"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "lockBudgetSeconds": {
+              "type": "number",
+              "title": "Lock Budget Seconds",
+              "description": "Blocking lock seconds allowed per table across the sequence",
+              "minimum": 0
+            },
+            "hotTableFileThreshold": {
+              "type": "number",
+              "title": "Hot Table File Threshold",
+              "description": "Distinct files touching one table before SQ002 fires",
+              "minimum": 0
+            }
+          }
+        },
+        "findings": {
+          "type": "array",
+          "title": "Sequence Findings",
+          "items": {
+            "$ref": "#/definitions/SequenceFinding"
+          }
+        },
+        "blastRadius": {
+          "type": "object",
+          "title": "Blast Radius",
+          "description": "SQ005 — what this deploy touches and what it costs",
+          "required": [
+            "totalEstimatedLockSeconds",
+            "estimateBasis",
+            "tables"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "totalEstimatedLockSeconds": {
+              "type": "number",
+              "title": "Total Estimated Lock Seconds",
+              "minimum": 0
+            },
+            "estimateBasis": {
+              "type": "string",
+              "title": "Estimate Basis",
+              "description": "'measured' when row counts were supplied and the estimate is calibrated to real table sizes, 'heuristic' when it falls back to per-operation defaults",
+              "enum": [
+                "measured",
+                "heuristic"
+              ]
+            },
+            "tables": {
+              "type": "array",
+              "title": "Tables",
+              "items": {
+                "$ref": "#/definitions/TableBlastRadius"
+              }
+            }
+          }
+        },
+        "summary": {
+          "type": "object",
+          "title": "Sequence Summary",
+          "required": [
+            "totalFindings",
+            "criticalCount",
+            "warningCount",
+            "tablesTouched"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "totalFindings": {
+              "type": "integer",
+              "title": "Total Findings",
+              "minimum": 0
+            },
+            "criticalCount": {
+              "type": "integer",
+              "title": "Critical Findings",
+              "minimum": 0
+            },
+            "warningCount": {
+              "type": "integer",
+              "title": "Warning Findings",
+              "minimum": 0
+            },
+            "tablesTouched": {
+              "type": "integer",
+              "title": "Tables Touched",
+              "minimum": 0
+            }
+          }
+        },
+        "parseErrors": {
+          "type": "array",
+          "title": "Parse Errors",
+          "description": "Files that could not be parsed, and were left out of the analysis",
+          "items": {
+            "type": "object",
+            "required": [
+              "file",
+              "error"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "file": {
+                "type": "string"
+              },
+              "error": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "JsonMultiReport": {
+      "type": "object",
+      "title": "Multi-File Report",
+      "description": "Analysis report for multiple SQL migration files",
+      "required": [
+        "$schema",
+        "version",
+        "files",
+        "overallRiskLevel",
+        "totalViolations"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "$schema": {
+          "type": "string",
+          "title": "Schema URI",
+          "description": "JSON Schema version URI",
+          "const": "https://migrationpilot.dev/schemas/report-v1.json"
+        },
+        "version": {
+          "type": "string",
+          "title": "Report Version",
+          "description": "Version of the report format",
+          "pattern": "^\\d+\\.\\d+\\.\\d+$"
+        },
+        "files": {
+          "type": "array",
+          "title": "File Reports",
+          "description": "Individual reports for each analyzed file",
+          "items": {
+            "$ref": "#/definitions/JsonReport"
+          },
+          "minItems": 1
+        },
+        "overallRiskLevel": {
+          "type": "string",
+          "title": "Overall Risk Level",
+          "description": "Worst risk level across all files",
+          "enum": [
+            "GREEN",
+            "YELLOW",
+            "RED"
+          ]
+        },
+        "totalViolations": {
+          "type": "integer",
+          "title": "Total Violations",
+          "description": "Combined violation count from all files",
+          "minimum": 0
+        },
+        "sequence": {
+          "title": "Sequence Analysis",
+          "description": "Cross-file findings. Added in 1.6.0 — absent when --no-sequence is used. Wrapped in allOf because draft-07 ignores keywords sitting beside a $ref",
+          "allOf": [
+            {
+              "$ref": "#/definitions/SequenceReport"
+            }
+          ]
+        }
+      }
+    }
+  }
+}
