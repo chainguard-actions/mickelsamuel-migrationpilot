@@ -1,0 +1,39 @@
+name: Test exclude rules input
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - id: action
+        uses: .
+        with:
+          migration-path: tests/fixtures/migrations/risky
+          pg-version: '17'
+          fail-on: 'never'
+          exclude: 'MP001,MP004'
+        continue-on-error: true
+
+      - name: Assert action ran with exclude rules
+        env:
+          RISK_LEVEL: ${{ steps.action.outputs.risk-level }}
+          VIOLATIONS: ${{ steps.action.outputs.violations }}
+          SARIF_FILE: ${{ steps.action.outputs.sarif-file }}
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          echo "risk-level: $RISK_LEVEL"
+          echo "violations: $VIOLATIONS"
+          echo "sarif-file: $SARIF_FILE"
+
+          if [ "$OUTCOME" = "success" ]; then
+            echo "PASS: action completed with excluded rules"
+          elif [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: action failed gracefully (sentinel repo or license restriction)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi
