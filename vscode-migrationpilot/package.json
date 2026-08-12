@@ -1,0 +1,137 @@
+{
+  "name": "migrationpilot",
+  "displayName": "MigrationPilot",
+  "description": "PostgreSQL migration safety linter — 112 rules for lock safety, data protection, and best practices",
+  "version": "1.6.0",
+  "publisher": "migrationpilot",
+  "license": "MIT",
+  "homepage": "https://migrationpilot.dev",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mickelsamuel/migrationpilot"
+  },
+  "bugs": {
+    "url": "https://github.com/mickelsamuel/migrationpilot/issues"
+  },
+  "engines": {
+    "vscode": "^1.109.0"
+  },
+  "categories": [
+    "Linters",
+    "Programming Languages"
+  ],
+  "keywords": [
+    "postgresql",
+    "postgres",
+    "migration",
+    "migration-safety",
+    "sql",
+    "ddl",
+    "linter",
+    "safety",
+    "database",
+    "zero-downtime",
+    "schema",
+    "lock",
+    "prisma",
+    "drizzle",
+    "flyway"
+  ],
+  "icon": "icon.png",
+  "galleryBanner": {
+    "color": "#0f172a",
+    "theme": "dark"
+  },
+  "activationEvents": [
+    "onLanguage:sql",
+    "onLanguage:pgsql",
+    "onLanguage:postgres",
+    "workspaceContains:**/*.sql"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "MigrationPilot",
+      "properties": {
+        "migrationpilot.enable": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable MigrationPilot diagnostics for SQL files"
+        },
+        "migrationpilot.pgVersion": {
+          "type": "number",
+          "default": 17,
+          "minimum": 9,
+          "maximum": 20,
+          "description": "Target PostgreSQL version (9-20)"
+        },
+        "migrationpilot.excludeRules": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Rule IDs to exclude (e.g. [\"MP001\", \"MP004\"])"
+        },
+        "migrationpilot.filePattern": {
+          "type": "string",
+          "default": "**/*.sql",
+          "description": "Glob pattern for files to analyze"
+        },
+        "migrationpilot.severity.critical": {
+          "type": "string",
+          "enum": [
+            "Error",
+            "Warning",
+            "Information",
+            "Hint"
+          ],
+          "default": "Error",
+          "description": "VS Code severity for critical violations"
+        },
+        "migrationpilot.severity.warning": {
+          "type": "string",
+          "enum": [
+            "Error",
+            "Warning",
+            "Information",
+            "Hint"
+          ],
+          "default": "Warning",
+          "description": "VS Code severity for warning violations"
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "migrationpilot.analyzeFile",
+        "title": "MigrationPilot: Analyze Current File"
+      },
+      {
+        "command": "migrationpilot.analyzeWorkspace",
+        "title": "MigrationPilot: Analyze All SQL Files"
+      },
+      {
+        "command": "migrationpilot.clearDiagnostics",
+        "title": "MigrationPilot: Clear Diagnostics"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "package": "npx @vscode/vsce package --no-dependencies",
+    "lint": "eslint src/"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.109.0",
+    "esbuild": "^0.28.2",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "libpg-query-wasm": "0.2.1"
+  },
+  "overrides": {
+    "protobufjs": "^7.6.5"
+  }
+}

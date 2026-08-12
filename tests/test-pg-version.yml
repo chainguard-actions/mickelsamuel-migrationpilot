@@ -1,0 +1,30 @@
+name: Test pg-version input
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: action
+        uses: .
+        with:
+          migration-path: 'migrations/*.sql'
+          github-token: ${{ github.token }}
+          pg-version: '16'
+      - name: Assert action succeeded with pg-version 16
+        env:
+          RISK: ${{ steps.action.outputs.risk-level }}
+          VIOLATIONS: ${{ steps.action.outputs.violations }}
+        run: |
+          echo "risk-level: $RISK"
+          echo "violations: $VIOLATIONS"
+          if [ "$RISK" != "GREEN" ]; then
+            echo "FAIL: expected risk-level GREEN in non-PR context, got '$RISK'"
+            exit 1
+          fi
+          if [ "$VIOLATIONS" != "0" ]; then
+            echo "FAIL: expected 0 violations in non-PR context, got '$VIOLATIONS'"
+            exit 1
+          fi
+          echo "PASS: action handled pg-version=16 correctly"

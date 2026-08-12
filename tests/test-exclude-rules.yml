@@ -1,0 +1,30 @@
+name: Test exclude rules input
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: action
+        uses: .
+        with:
+          migration-path: 'migrations/*.sql'
+          github-token: ${{ github.token }}
+          exclude: 'MP001,MP004'
+      - name: Assert action succeeded with exclude rules
+        env:
+          RISK: ${{ steps.action.outputs.risk-level }}
+          VIOLATIONS: ${{ steps.action.outputs.violations }}
+        run: |
+          echo "risk-level: $RISK"
+          echo "violations: $VIOLATIONS"
+          if [ "$RISK" != "GREEN" ]; then
+            echo "FAIL: expected risk-level to be GREEN (non-PR context), got '$RISK'"
+            exit 1
+          fi
+          if [ "$VIOLATIONS" != "0" ]; then
+            echo "FAIL: expected violations to be 0 (non-PR context), got '$VIOLATIONS'"
+            exit 1
+          fi
+          echo "PASS: action handled exclude input correctly"

@@ -1,0 +1,36 @@
+name: Test config-file input
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Create a minimal config file
+        run: |
+          cat > /tmp/migrationpilotrc.yml <<'EOF'
+          pgVersion: 15
+          failOn: critical
+          EOF
+      - id: action
+        uses: .
+        with:
+          migration-path: 'migrations/*.sql'
+          github-token: ${{ github.token }}
+          config-file: '/tmp/migrationpilotrc.yml'
+      - name: Assert action succeeded with config-file
+        env:
+          RISK: ${{ steps.action.outputs.risk-level }}
+          VIOLATIONS: ${{ steps.action.outputs.violations }}
+        run: |
+          echo "risk-level: $RISK"
+          echo "violations: $VIOLATIONS"
+          if [ "$RISK" != "GREEN" ]; then
+            echo "FAIL: expected risk-level GREEN in non-PR context, got '$RISK'"
+            exit 1
+          fi
+          if [ "$VIOLATIONS" != "0" ]; then
+            echo "FAIL: expected 0 violations in non-PR context, got '$VIOLATIONS'"
+            exit 1
+          fi
+          echo "PASS: action handled config-file correctly"
