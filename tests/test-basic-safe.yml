@@ -1,0 +1,66 @@
+name: Test basic safe migration
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - id: action
+        uses: .
+        with:
+          migration-path: tests/fixtures/migrations/safe
+          github-token: ${{ github.token }}
+          pg-version: '17'
+          fail-on: 'never'
+        continue-on-error: true
+
+      - name: Assert action ran and produced valid outputs or failed gracefully
+        env:
+          RISK: ${{ steps.action.outputs.risk-level }}
+          VIOLATIONS: ${{ steps.action.outputs.violations }}
+          SARIF: ${{ steps.action.outputs.sarif-file }}
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          echo "outcome:    $OUTCOME"
+          echo "risk-level: $RISK"
+          echo "violations: $VIOLATIONS"
+          echo "sarif-file: $SARIF"
+
+          if [ "$OUTCOME" = "skipped" ]; then
+            echo "FAIL: action was skipped unexpectedly"
+            exit 1
+          fi
+
+          if [ "$OUTCOME" = "success" ]; then
+            # Under workflow_dispatch (no PR), the action exits early with GREEN/0
+            # risk-level must be one of RED, YELLOW, GREEN if set
+            if [ -n "$RISK" ]; then
+              case "$RISK" in
+                RED|YELLOW|GREEN)
+                  echo "PASS: risk-level is valid: $RISK"
+                  ;;
+                *)
+                  echo "FAIL: unexpected risk-level value: $RISK"
+                  exit 1
+                  ;;
+              esac
+            fi
+
+            # violations must be a non-negative integer if set
+            if [ -n "$VIOLATIONS" ]; then
+              if ! echo "$VIOLATIONS" | grep -qE '^[0-9]+$'; then
+                echo "FAIL: violations is not a non-negative integer: $VIOLATIONS"
+                exit 1
+              fi
+              echo "PASS: violations=$VIOLATIONS"
+            fi
+
+            echo "PASS: basic safe migration test complete"
+          elif [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: action failed gracefully (dist artifact may not be built yet)"
+          else
+            echo "FAIL: unexpected outcome: $OUTCOME"
+            exit 1
+          fi

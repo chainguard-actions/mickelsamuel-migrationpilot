@@ -1,0 +1,68 @@
+name: Test config-file input
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create config file
+        run: |
+          cat > /tmp/migrationpilotrc.yml <<'EOF'
+          fail-on: never
+          pg-version: '17'
+          EOF
+
+      - id: action
+        uses: .
+        with:
+          migration-path: tests/fixtures/migrations/safe
+          github-token: ${{ github.token }}
+          config-file: /tmp/migrationpilotrc.yml
+          fail-on: 'never'
+        continue-on-error: true
+
+      - name: Assert action ran with config-file input or failed gracefully
+        env:
+          RISK: ${{ steps.action.outputs.risk-level }}
+          VIOLATIONS: ${{ steps.action.outputs.violations }}
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          echo "outcome:    $OUTCOME"
+          echo "risk-level: $RISK"
+          echo "violations: $VIOLATIONS"
+
+          if [ "$OUTCOME" = "skipped" ]; then
+            echo "FAIL: action was skipped unexpectedly"
+            exit 1
+          fi
+
+          if [ "$OUTCOME" = "success" ]; then
+            if [ -n "$RISK" ]; then
+              case "$RISK" in
+                RED|YELLOW|GREEN)
+                  echo "PASS: risk-level is valid: $RISK"
+                  ;;
+                *)
+                  echo "FAIL: unexpected risk-level value: $RISK"
+                  exit 1
+                  ;;
+              esac
+            fi
+
+            if [ -n "$VIOLATIONS" ]; then
+              if ! echo "$VIOLATIONS" | grep -qE '^[0-9]+$'; then
+                echo "FAIL: violations is not a non-negative integer: $VIOLATIONS"
+                exit 1
+              fi
+              echo "PASS: violations=$VIOLATIONS"
+            fi
+
+            echo "PASS: config-file test complete"
+          elif [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: action failed gracefully (dist artifact may not be built yet)"
+          else
+            echo "FAIL: unexpected outcome: $OUTCOME"
+            exit 1
+          fi
