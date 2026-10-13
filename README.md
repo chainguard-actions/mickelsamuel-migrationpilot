@@ -16,6 +16,7 @@ Hardened by [Chainguard](https://www.chainguard.dev) from the upstream action at
 | v1.6.1 | [`v1.6.1`](https://github.com/chainguard-actions/mickelsamuel-migrationpilot/tree/v1.6.1) | [`bab9820`](https://github.com/mickelsamuel/migrationpilot/commit/bab9820b97f274ca82b808790d4dd667e1c72b93) |
 | v1.6.2 | [`v1.6.2`](https://github.com/chainguard-actions/mickelsamuel-migrationpilot/tree/v1.6.2) | [`ee66aff`](https://github.com/mickelsamuel/migrationpilot/commit/ee66aff8a583ac3f82aa275546d1cc6deb35772c) |
 | v1.6.3 | [`v1.6.3`](https://github.com/chainguard-actions/mickelsamuel-migrationpilot/tree/v1.6.3) | [`081c571`](https://github.com/mickelsamuel/migrationpilot/commit/081c571a086c3524495ac0faf78042e3a10ee2fc) |
+| v1.6.4 | [`v1.6.4`](https://github.com/chainguard-actions/mickelsamuel-migrationpilot/tree/v1.6.4) | [`a203f1e`](https://github.com/mickelsamuel/migrationpilot/commit/a203f1ecf4d4edcd747b747d63352c031f55cfd7) |
 
 ## Privacy
 
