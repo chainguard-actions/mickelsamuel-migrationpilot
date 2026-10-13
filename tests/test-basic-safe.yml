@@ -1,0 +1,58 @@
+name: Test basic safe migration (GREEN)
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create a safe migration file
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/test-migrations"
+          cat > "$GITHUB_WORKSPACE/test-migrations/001_safe.sql" <<'EOF'
+          CREATE TABLE IF NOT EXISTS users (
+            id SERIAL PRIMARY KEY,
+            email TEXT NOT NULL,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+          );
+          EOF
+
+      - id: action
+        uses: .
+        with:
+          migration-path: "test-migrations/*.sql"
+          github-token: ${{ github.token }}
+          fail-on: never
+        continue-on-error: true
+
+      - name: Assert action ran and produced expected outputs
+        env:
+          RISK: ${{ steps.action.outputs.risk-level }}
+          VIOLATIONS: ${{ steps.action.outputs.violations }}
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          echo "risk-level: $RISK"
+          echo "violations: $VIOLATIONS"
+
+          # Under workflow_dispatch (no PR), the action exits early with GREEN/0
+          # and no sarif-file. This is expected behavior.
+          if [ "$OUTCOME" = "failure" ]; then
+            echo "FAIL: action failed unexpectedly with fail-on: never"
+            exit 1
+          fi
+
+          # The action should always set risk-level (either from early return or full analysis)
+          if [ -z "$RISK" ]; then
+            echo "FAIL: risk-level output is empty"
+            exit 1
+          fi
+
+          # Under workflow_dispatch early return, risk-level should be GREEN
+          if [ "$RISK" != "GREEN" ]; then
+            echo "NOTE: risk-level is '$RISK' (expected GREEN for non-PR run)"
+          fi
+
+          echo "PASS: risk-level='$RISK' violations='$VIOLATIONS'"

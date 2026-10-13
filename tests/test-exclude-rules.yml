@@ -1,0 +1,82 @@
+name: Test exclude rules input
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create a migration file
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/test-migrations"
+          cat > "$GITHUB_WORKSPACE/test-migrations/001_index.sql" <<'EOF'
+          CREATE INDEX idx_orders_user_id ON orders (user_id);
+          EOF
+
+      - name: Run action without exclusions
+        id: action-no-exclude
+        uses: .
+        with:
+          migration-path: "test-migrations/*.sql"
+          github-token: ${{ github.token }}
+          fail-on: never
+        continue-on-error: true
+
+      - name: Assert action ran without exclusions
+        env:
+          RISK: ${{ steps.action-no-exclude.outputs.risk-level }}
+          VIOLATIONS: ${{ steps.action-no-exclude.outputs.violations }}
+          OUTCOME: ${{ steps.action-no-exclude.outcome }}
+        run: |
+          echo "outcome (no-exclude): $OUTCOME"
+          echo "risk-level (no-exclude): $RISK"
+          echo "violations (no-exclude): $VIOLATIONS"
+
+          # Under workflow_dispatch (no PR), the action exits early with GREEN/0.
+          if [ "$OUTCOME" = "failure" ]; then
+            echo "FAIL: action failed unexpectedly with fail-on: never"
+            exit 1
+          fi
+
+          if [ -z "$RISK" ]; then
+            echo "FAIL: risk-level output is empty"
+            exit 1
+          fi
+
+          echo "PASS: action ran without exclusions, risk-level='$RISK'"
+
+      - name: Run action with MP001 excluded
+        id: action-with-exclude
+        uses: .
+        with:
+          migration-path: "test-migrations/*.sql"
+          github-token: ${{ github.token }}
+          fail-on: never
+          exclude: "MP001"
+        continue-on-error: true
+
+      - name: Assert action ran with exclusion
+        env:
+          RISK: ${{ steps.action-with-exclude.outputs.risk-level }}
+          VIOLATIONS: ${{ steps.action-with-exclude.outputs.violations }}
+          OUTCOME: ${{ steps.action-with-exclude.outcome }}
+        run: |
+          echo "outcome (with-exclude): $OUTCOME"
+          echo "risk-level (with-exclude): $RISK"
+          echo "violations (with-exclude): $VIOLATIONS"
+
+          # Under workflow_dispatch (no PR), the action exits early with GREEN/0.
+          # The exclude input is accepted without error.
+          if [ "$OUTCOME" = "failure" ]; then
+            echo "FAIL: action failed unexpectedly with fail-on: never and exclude: MP001"
+            exit 1
+          fi
+
+          if [ -z "$RISK" ]; then
+            echo "FAIL: risk-level output is empty"
+            exit 1
+          fi
+
+          echo "PASS: action ran with exclusion, risk-level='$RISK' violations='$VIOLATIONS'"

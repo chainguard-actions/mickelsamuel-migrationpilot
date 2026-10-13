@@ -1,0 +1,82 @@
+name: Test pg-version input
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create a migration file
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/test-migrations"
+          cat > "$GITHUB_WORKSPACE/test-migrations/001_add_column.sql" <<'EOF'
+          ALTER TABLE orders ADD COLUMN IF NOT EXISTS notes TEXT;
+          EOF
+
+      - id: action-v14
+        uses: .
+        with:
+          migration-path: "test-migrations/*.sql"
+          github-token: ${{ github.token }}
+          pg-version: "14"
+          fail-on: never
+        continue-on-error: true
+
+      - name: Assert action ran with pg-version 14
+        env:
+          RISK: ${{ steps.action-v14.outputs.risk-level }}
+          VIOLATIONS: ${{ steps.action-v14.outputs.violations }}
+          OUTCOME: ${{ steps.action-v14.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          echo "risk-level: $RISK"
+          echo "violations: $VIOLATIONS"
+
+          # Under workflow_dispatch (no PR), the action exits early with GREEN/0.
+          # The pg-version input is accepted without error.
+          if [ "$OUTCOME" = "failure" ]; then
+            echo "FAIL: action failed unexpectedly with fail-on: never"
+            exit 1
+          fi
+
+          if [ -z "$RISK" ]; then
+            echo "FAIL: risk-level output is empty"
+            exit 1
+          fi
+
+          echo "PASS: action ran with pg-version=14, risk-level='$RISK'"
+
+      - name: Run same migration with pg-version 17
+        id: action-v17
+        uses: .
+        with:
+          migration-path: "test-migrations/*.sql"
+          github-token: ${{ github.token }}
+          pg-version: "17"
+          fail-on: never
+        continue-on-error: true
+
+      - name: Assert action ran with pg-version 17
+        env:
+          RISK: ${{ steps.action-v17.outputs.risk-level }}
+          VIOLATIONS: ${{ steps.action-v17.outputs.violations }}
+          OUTCOME: ${{ steps.action-v17.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          echo "risk-level: $RISK"
+          echo "violations: $VIOLATIONS"
+
+          # Under workflow_dispatch (no PR), the action exits early with GREEN/0.
+          if [ "$OUTCOME" = "failure" ]; then
+            echo "FAIL: action failed unexpectedly with fail-on: never"
+            exit 1
+          fi
+
+          if [ -z "$RISK" ]; then
+            echo "FAIL: risk-level output is empty"
+            exit 1
+          fi
+
+          echo "PASS: action ran with pg-version=17, risk-level='$RISK'"

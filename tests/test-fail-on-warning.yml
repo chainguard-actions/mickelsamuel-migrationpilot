@@ -1,0 +1,81 @@
+name: Test fail-on warning input is accepted
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create a migration file
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/test-migrations"
+          cat > "$GITHUB_WORKSPACE/test-migrations/001_risky.sql" <<'EOF'
+          ALTER TABLE users ADD CONSTRAINT users_email_unique UNIQUE (email);
+          EOF
+
+      - name: Run with fail-on never
+        id: action-never
+        uses: .
+        with:
+          migration-path: "test-migrations/*.sql"
+          github-token: ${{ github.token }}
+          fail-on: never
+        continue-on-error: true
+
+      - name: Assert fail-on never does not fail
+        env:
+          OUTCOME: ${{ steps.action-never.outcome }}
+          RISK: ${{ steps.action-never.outputs.risk-level }}
+          VIOLATIONS: ${{ steps.action-never.outputs.violations }}
+        run: |
+          echo "outcome (never): $OUTCOME"
+          echo "risk-level: $RISK"
+          echo "violations: $VIOLATIONS"
+
+          # Under workflow_dispatch (no PR), the action exits early with GREEN/0.
+          if [ "$OUTCOME" = "failure" ]; then
+            echo "FAIL: action failed with fail-on: never — it should never fail on violations"
+            exit 1
+          fi
+
+          if [ -z "$RISK" ]; then
+            echo "FAIL: risk-level output is empty"
+            exit 1
+          fi
+
+          echo "PASS: fail-on: never did not fail the step, risk-level='$RISK'"
+
+      - name: Run with fail-on warning
+        id: action-warning
+        uses: .
+        with:
+          migration-path: "test-migrations/*.sql"
+          github-token: ${{ github.token }}
+          fail-on: warning
+        continue-on-error: true
+
+      - name: Assert fail-on warning behavior
+        env:
+          OUTCOME: ${{ steps.action-warning.outcome }}
+          RISK: ${{ steps.action-warning.outputs.risk-level }}
+          VIOLATIONS: ${{ steps.action-warning.outputs.violations }}
+        run: |
+          echo "outcome (warning): $OUTCOME"
+          echo "risk-level: $RISK"
+          echo "violations: $VIOLATIONS"
+
+          # Under workflow_dispatch (no PR), the action exits early with GREEN/0.
+          # Since there are no violations (early return), fail-on: warning should not trigger.
+          if [ "$OUTCOME" = "failure" ]; then
+            echo "FAIL: action failed with fail-on: warning — no PR means no violations"
+            exit 1
+          fi
+
+          if [ -z "$RISK" ]; then
+            echo "FAIL: risk-level output is empty"
+            exit 1
+          fi
+
+          echo "PASS: fail-on: warning accepted, risk-level='$RISK' violations='$VIOLATIONS'"

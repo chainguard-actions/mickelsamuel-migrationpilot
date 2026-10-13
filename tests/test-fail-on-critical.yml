@@ -1,0 +1,78 @@
+name: Test fail-on critical input is accepted
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create a migration file
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/test-migrations"
+          cat > "$GITHUB_WORKSPACE/test-migrations/001_critical.sql" <<'EOF'
+          CREATE INDEX idx_users_email ON users (email);
+          EOF
+
+      - id: action
+        uses: .
+        with:
+          migration-path: "test-migrations/*.sql"
+          github-token: ${{ github.token }}
+          fail-on: critical
+        continue-on-error: true
+
+      - name: Assert action ran with fail-on critical
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+          RISK: ${{ steps.action.outputs.risk-level }}
+          VIOLATIONS: ${{ steps.action.outputs.violations }}
+        run: |
+          echo "outcome: $OUTCOME"
+          echo "risk-level: $RISK"
+          echo "violations: $VIOLATIONS"
+
+          # Under workflow_dispatch (no PR), the action exits early with GREEN/0
+          # and a warning. Since there are no violations (early return), the action
+          # should succeed even with fail-on: critical.
+          if [ "$OUTCOME" = "failure" ]; then
+            echo "FAIL: action failed unexpectedly — no PR means no violations, so fail-on: critical should not trigger"
+            exit 1
+          fi
+
+          if [ -z "$RISK" ]; then
+            echo "FAIL: risk-level output is empty"
+            exit 1
+          fi
+
+          echo "PASS: action ran with fail-on: critical, risk-level='$RISK' violations='$VIOLATIONS'"
+
+      - name: Assert fail-on never also succeeds
+        id: action-never
+        uses: .
+        with:
+          migration-path: "test-migrations/*.sql"
+          github-token: ${{ github.token }}
+          fail-on: never
+        continue-on-error: true
+
+      - name: Assert fail-on never outcome
+        env:
+          OUTCOME: ${{ steps.action-never.outcome }}
+          RISK: ${{ steps.action-never.outputs.risk-level }}
+        run: |
+          echo "outcome (never): $OUTCOME"
+          echo "risk-level (never): $RISK"
+
+          if [ "$OUTCOME" = "failure" ]; then
+            echo "FAIL: action failed with fail-on: never"
+            exit 1
+          fi
+
+          if [ -z "$RISK" ]; then
+            echo "FAIL: risk-level output is empty"
+            exit 1
+          fi
+
+          echo "PASS: fail-on: never succeeded, risk-level='$RISK'"

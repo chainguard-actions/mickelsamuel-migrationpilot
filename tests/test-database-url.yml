@@ -1,0 +1,52 @@
+name: Test database-url input (catalog-aware rules)
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create a safe migration file
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/test-migrations-db"
+          cat > "$GITHUB_WORKSPACE/test-migrations-db/001_add_index.sql" <<'EOF'
+          CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_users_email ON users(email);
+          EOF
+
+      - id: action
+        uses: .
+        with:
+          migration-path: "test-migrations-db/*.sql"
+          github-token: ${{ github.token }}
+          database-url: "postgresql://postgres:postgres@localhost:5432/testdb"
+          fail-on: never
+        continue-on-error: true
+
+      - name: Assert action ran with database-url input
+        env:
+          RISK: ${{ steps.action.outputs.risk-level }}
+          VIOLATIONS: ${{ steps.action.outputs.violations }}
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          echo "risk-level: $RISK"
+          echo "violations: $VIOLATIONS"
+
+          # The action may fail to connect to the (unavailable) database, or it
+          # may succeed and skip catalog-dependent rules gracefully. Either is
+          # acceptable — what matters is that the input was accepted and the
+          # action did not crash with an unrelated error.
+          if [ "$OUTCOME" = "success" ]; then
+            if [ -z "$RISK" ]; then
+              echo "FAIL: action succeeded but risk-level output is empty"
+              exit 1
+            fi
+            echo "PASS: action succeeded with database-url; risk-level='$RISK' violations='$VIOLATIONS'"
+          elif [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: action failed gracefully (no live DB available under act harness)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi

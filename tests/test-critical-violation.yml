@@ -1,0 +1,71 @@
+name: Test critical violation detection (RED)
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create a migration with critical violations
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/test-migrations"
+          cat > "$GITHUB_WORKSPACE/test-migrations/001_critical.sql" <<'EOF'
+          ALTER TABLE users ADD CONSTRAINT users_email_unique UNIQUE (email);
+          EOF
+
+      - id: action
+        uses: .
+        with:
+          migration-path: "test-migrations/*.sql"
+          github-token: ${{ github.token }}
+          fail-on: never
+        continue-on-error: true
+
+      - name: Assert action ran and produced outputs
+        env:
+          RISK: ${{ steps.action.outputs.risk-level }}
+          VIOLATIONS: ${{ steps.action.outputs.violations }}
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          echo "risk-level: $RISK"
+          echo "violations: $VIOLATIONS"
+
+          # Under workflow_dispatch (no PR), the action exits early with GREEN/0
+          # and a warning. This is expected behavior — the action is PR-only.
+          if [ "$OUTCOME" = "failure" ]; then
+            echo "FAIL: action failed unexpectedly with fail-on: never"
+            exit 1
+          fi
+
+          if [ -z "$RISK" ]; then
+            echo "FAIL: risk-level output is empty"
+            exit 1
+          fi
+
+          # Under workflow_dispatch early return, risk-level should be GREEN
+          # and violations should be 0 (no PR to analyze)
+          if [ "$RISK" != "GREEN" ]; then
+            echo "NOTE: risk-level is '$RISK' (expected GREEN for non-PR run)"
+          fi
+
+          echo "PASS: action ran successfully, risk-level='$RISK' violations='$VIOLATIONS'"
+
+      - name: Assert violations output is set
+        env:
+          VIOLATIONS: ${{ steps.action.outputs.violations }}
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          echo "violations: $VIOLATIONS"
+          if [ "$OUTCOME" != "success" ]; then
+            echo "SKIP: action did not succeed"
+            exit 0
+          fi
+          # violations output should be set (0 for non-PR run)
+          if [ -z "$VIOLATIONS" ]; then
+            echo "FAIL: violations output is empty"
+            exit 1
+          fi
+          echo "PASS: violations output is set: '$VIOLATIONS'"

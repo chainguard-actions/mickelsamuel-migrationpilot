@@ -1,0 +1,573 @@
+# Changelog
+
+All notable changes to MigrationPilot will be documented in this file.
+
+## [1.6.4] - 2026-10-13
+
+The Org plan's `policy` block was only read by the `policy` command. `analyze`, `check`, `precommit` and the GitHub Action ignored it, so a required rule the config turned off stayed off, the severity floor never held, and a blocked pattern failed nothing. They apply it now, with a license key, and the key check itself is fixed.
+
+### Fixed
+- **`analyze`, `check`, `precommit` and the Action apply the config's `policy` block** when they have an Org license key (`--license-key`, `MIGRATIONPILOT_LICENSE_KEY`, or the Action's `license-key` input). Required rules run even when `rules:`, a preset, `--exclude` or the `exclude` input, or a disable comment turns them off, and the run prints a note for each one it keeps on. The severity floor stops a rule being set below it. A statement that matches a blocked pattern fails the run with exit code 2, or fails the check, whatever `--fail-on` says; the Action annotates the line and lists it at the top of the PR comment and in the job summary. Review patterns are reported and fail nothing. `watch`, `plan`, `plan-fix`, `simulate` and `mutation-test` keep the required rules on and hold the floor too
+- **A disable comment can't switch off a required rule.** It did, even in the `policy` command, which didn't report it either. `policy` now lists each such comment
+- **The floor doesn't push a rule above its own severity.** Under `severityFloor: critical`, a rule that ships as a warning stays a warning; the floor only stops a config from lowering a rule
+- **Patterns match statements, not the raw file.** They skip comments, ignore case and whitespace, and match whole words, so `DROP TABLE` in a comment no longer counts and `DROP TABLE` no longer matches `DROP TABLESPACE`
+- **The Action writes the audit log**, one `analysis_complete` record per file and an `action_complete` record per run, under `command: "action"`
+
+### Added
+- **An Org tier.** The Org checkout issues `MP-v2-ORG-…` keys and `doctor` reports `org tier`. A Pro, Team or Enterprise key signed with the new key turns on the same features
+- **The JSON report carries a `policy` field** when the policy applies: `blocked` and `review`, each a list of `{ line, pattern }`, and `notes`. `report-v1.json` describes it. Audit records carry `metadata.policyBlocked`
+
+### Changed
+- **The policy block and the audit log need an Org license key.** Without one, every run says it isn't applying them (on stderr, or as an Action warning) and runs every rule as before. In 1.6.3 the audit log ran with no key at all. The `policy` command exits 1 without a key
+- **A check that passed on 1.6.3 can fail on 1.6.4** once the key is set: a required rule the config turned off fires again, a downgraded rule goes back to the floor, and a blocked pattern fails the run
+- **`--no-config` skips the config file, and the policy with it.** Enforce the policy from CI, where the config is reviewed like code. The MCP server doesn't read the config
+
+### Security
+- **License keys are checked against a new signing key.** The private half of the key pair 1.6.3 and earlier trusted was in the repository's test files, so anyone could sign a key those versions accepted. 1.6.4 trusts only the new key, and keys now look like `MP-v2-ORG-YYYYMMDD-…`. A key in the old format is refused with a note to write to hello@migrationpilot.dev for a new one
+
+## [1.6.3] - 2026-10-12
+
+The GitHub Action could pass a pull request without reading the migrations it was there to check, and it ignored most of what the config file told it. This release fixes both.
+
+### Fixed
+- **A migration the Action can't parse fails the check.** It used to get a warning and a green check: the parser returns no statements for a file it can't read, so no rule fired. The CLI already exits non-zero on the same file. The failure now names each file and the parser's error, the file gets an error annotation, and the PR comment and job summary list it as not checked instead of calling the PR clean. A file the pull request changed that isn't in the workspace fails the same way, with a note to check out the pull request's commit (a `pull_request_target` run checks out the base branch, and a checkout with `path:` puts the files where the Action doesn't look). `fail-on: never` still never fails: it reports these files and passes
+- **A directory in `migration-path` means every `.sql` file under it.** `migration-path: migrations/`, the form the homepage and the docs showed, matched no file at all, so every run reported that the pull request changed no migrations. It now reads a directory the way `check <dir>` does
+- **`**` in `migration-path` matches the files directly in the directory too.** `migrations/**/*.sql` skipped `migrations/001_init.sql` on the normal pull-request path, while the fallback for read-only tokens included it. Both paths now pick the same files, and `{a,b}` and `[0-9]` work on both
+- **The Action reads the config's `ignore` list**, as the CLI already did. That's how to leave out a migration that isn't plain SQL, and the comment and job summary name each file it left out
+- **`ignore` patterns with a wildcard in the middle match.** `check`, `simulate`, `mutation-test` and the MCP server's `analyze_migration_dir` read each pattern as plain text with its `*`s removed, so `migrations/seed_*.sql`, the docs' own example, never matched anything. Patterns are globs now, and one with no slash matches the file name at any depth. Everything the old reading ignored is still ignored
+- **The `config-file` input loads the file it names.** It was searched as if it were a folder, so a config under any other name was skipped without a word. A `config-file` that doesn't exist now fails the run
+- **The Action applies the config's `rules`, `failOn` and `pgVersion`.** A rule turned off with `MP037: false` or `enabled: false`, including the ones the `startup` preset turns off, still ran in the Action. The config's `failOn` and `pgVersion` never applied either, because `action.yml` gave both inputs a default and the default always won. The config's values now apply unless the workflow sets the input
+- **The docs show only inputs the Action has.** Snippets across the site used `path:`, `paths:`, `pattern:` and `sarif-file:`, none of which exist, so a copied workflow failed on its first run. A test now checks every snippet against `action.yml`
+
+### Changed
+- **A check that passed on 1.6.2 can fail on 1.6.3.** That happens when a pull request touches a migration with psql meta-commands (`\set`, `\i`), template placeholders (Flyway's `${...}`) or PostgreSQL 18 syntax the bundled parser doesn't read yet (`VIRTUAL` generated columns, `NOT ENFORCED` constraints), or when `migration-path` names a directory and the check was passing because it read nothing. List files that aren't plain SQL under `ignore` in `.migrationpilotrc.yml`, or set `fail-on: never` to report without blocking
+- **The config's `failOn` and `pgVersion` now reach the Action.** With `failOn: warning` in the config, set directly or through a preset, and no `fail-on` in the workflow, the Action fails on warnings the way `check` already did. A config `pgVersion` changes which version-specific rules fire. Set the input in the workflow to keep the old behaviour
+
+## [1.6.2] - 2026-10-12
+
+A maintenance release: patched dependencies in the two bundles that ship them. No rule, engine or output changes.
+
+### Security
+- **The MCP server bundle carries patched dependencies.** `dist/mcp.cjs` now bundles the MCP TypeScript SDK 1.32.1 (was 1.30.0) and `fast-uri` 3.1.8 (was 3.1.5). That clears GHSA-6qxp-vccf-f47h in the SDK and six `fast-uri` advisories (GHSA-qw65-cvwx-89v3, GHSA-jqff-g426-hqxp, GHSA-f65p-4m7j-42xc, GHSA-fph4-wmhf-6fwf, GHSA-5jgf-p345-68v8, GHSA-hrr3-gc8f-f4qj).
+- **The GitHub Action bundle carries `undici` 6.29.0** (was 6.28.0), which clears GHSA-rfgv-xxqx-mfg5, GHSA-3wwx-pv8p-q78v and GHSA-r53p-7pc4-xj5r.
+
+## [1.6.1] - 2026-08-12
+
+Everything in 1.6.1 is the integration layer around an engine that already worked. A fresh-user test of every install path found the analysis correct every time and the wiring broken in four places; these are those fixes.
+
+### Fixed
+- **The pre-commit hook is no longer dead on arrival.** Installed through the pre-commit framework, the launcher resolved the repo's own unbuilt checkout instead of the published CLI and failed on every commit with "could not find the MigrationPilot CLI". The launcher (`migrationpilot-precommit` 1.0.1) now depends on the engine under an aliased name so the collision cannot happen, verified against a real pre-commit run
+- **`--format json` now validates against its own published schema.** The output was correct but the schema at `report-v1.json` was missing the `reversibility` and `sequence` keys under `additionalProperties: false`, so any CI that validated the output failed. A drift test now validates real output against the real schema on every build
+- **`simulate` is reachable from `npx`.** It resolved PGlite only in the CLI's own install scope and told local users to run an install that then didn't help; it now also looks in the invoking project, and the error names the working command per install path
+- **MP001's explanation was factually wrong** — it claimed `CREATE INDEX` without `CONCURRENTLY` takes an ACCESS EXCLUSIVE lock and blocks reads. It takes SHARE and blocks writes only, which the lock table in the same report already said correctly
+- **The safe-index recipe the tool recommends now passes the tool.** MP001's suggested fix used to trip MP023 and MP070; `--fix` inserted a `statement_timeout` that would kill a real `CONCURRENTLY` build and leave the invalid index MP070 warns about. The one canonical recipe (a `lock_timeout`, drop-first, no `statement_timeout`, no `IF NOT EXISTS`) now analyzes GREEN end to end, and MP070 keeps firing on the unsafe `IF NOT EXISTS` form — closing a hazard the benchmark had already recorded as a miss
+- **The GitHub Action survives a read-only workflow token.** A new repository's default token can't list a PR's changed files or post a comment; the Action used to die on that 403 before analyzing anything. It now falls back to globbing the checked-out tree, warns with the exact `permissions:` block to add, and still produces the verdict, SARIF, and annotations
+- **The PR comment is now actionable** — every violation carries `file:line` (so one rule firing on three identical statements is three distinct bullets), each statement's Risk cell escalates to red when it carries a critical instead of contradicting a red header, and the score breakdown explains that the headline is the worse of two tracks rather than their sum
+- Plain DML no longer suggested for exclusion, and `--exclude` is never offered for critical findings
+
+### Changed
+- The install docs name the tag that exists (`ghcr.io/…:1`, not `:v1`), the Windows Git Bash mount line, the `permissions:` block every fresh repo needs, and the honest SARIF-upload story; the Homebrew line is gone until a tap exists
+- `/docs/cli-reference` documents every command the CLI ships
+
+## [1.6.0] - 2026-08-12
+
+### New Rules (29 rules, 83 → 112 total)
+
+**Schema and data safety (MP084–MP099)**:
+- **MP084** `require-default-for-not-null-column` — adding `NOT NULL` without a default breaks concurrent inserts mid-deploy
+- **MP085** `warn-grant-widening` — flags `GRANT` statements that widen privileges inside a migration
+- **MP086** `require-explicit-on-delete` — foreign keys should state their `ON DELETE` behavior instead of inheriting `NO ACTION` silently
+- **MP087** `ban-volatile-check-constraint` — CHECK constraints calling volatile functions pass validation and then corrupt silently
+- **MP088** `require-analyze-after-backfill` — large backfills leave the planner with stale statistics until `ANALYZE`
+- **MP089** `warn-collation-change-rewrite` — column collation changes rewrite the table under `ACCESS EXCLUSIVE`
+- **MP090** `warn-trigger-on-hot-table` — new triggers add per-row cost; skips the expand-contract sync-trigger pattern
+- **MP091** `warn-privilege-drift` — `REVOKE`/`ALTER DEFAULT PRIVILEGES` in migrations drift from the source of truth
+- **MP092** `require-partitioned-index-strategy` — indexes on partitioned parents need the two-step `ON ONLY` + attach pattern
+- **MP093** `warn-default-partition-growth` — rows landing in the default partition make future `ATTACH PARTITION` scans grow unbounded
+- **MP094** `require-attach-partition-check` — `ATTACH PARTITION` without a matching CHECK constraint scans the whole partition under lock
+- **MP095** `warn-set-tablespace-rewrite` — `SET TABLESPACE` copies the entire relation while holding its lock
+- **MP096** `warn-matview-with-data` — `CREATE MATERIALIZED VIEW ... WITH DATA` runs the full query inside the migration
+- **MP097** `ban-drop-constraint-backing-index` — dropping an index that backs a constraint fails; ownership is settled from evidence, not the index name
+- **MP098** `warn-set-schema` — `SET SCHEMA` breaks every unqualified reference at once
+- **MP099** `warn-security-definer-search-path` — `SECURITY DEFINER` functions without a pinned `search_path` are a privilege-escalation vector
+
+**Production-context catalog (MP100–MP112, need `--database-url`, all free)**:
+- **MP100** `warn-redundant-index` — the new index duplicates an existing one's key prefix
+- **MP101** `warn-index-on-write-hot-table` — index builds on write-hot tables compete with every insert
+- **MP102** `warn-rewrite-disk-headroom` — a table rewrite needs as much free disk as the table itself
+- **MP103** `warn-replication-lag-risk` — long scans on large tables stall physical replicas
+- **MP104** `warn-long-index-build` — predicts index build time from live row counts
+- **MP105** `warn-timescale-hypertable-ddl` — DDL on a hypertable touches every chunk
+- **MP106** `prefer-timescale-drop-chunks` — `drop_chunks()` beats `DELETE` on time-series data
+- **MP107** `warn-citus-distributed-ddl` — DDL on Citus-distributed tables fans out to every shard
+- **MP108** `warn-partman-managed-parent` — pg_partman-managed parents should be changed through partman, not raw DDL
+- **MP109** `require-vector-index-params` — pgvector HNSW indexes need explicit build parameters (works offline)
+- **MP110** `warn-partitioned-parent-fanout` — parent-table DDL multiplies across live partitions
+- **MP111** `warn-timescale-columnstore-ddl` — DDL on compressed columnstore chunks fails or decompresses
+- **MP112** `warn-hnsw-build-memory` — HNSW builds exceeding `maintenance_work_mem` spill and crawl
+
+### Added
+- **`simulate`** — replays a migration against an in-process PostgreSQL (PGlite) and reports what actually happens, including errors static analysis cannot see
+- **Cross-file sequence analysis** on `check` — `--sequence`, `--fail-on-sequence`, `--lock-budget`: orders files, tracks locks across the whole set, and flags sequence-level hazards (SQ rules)
+- **`plan-fix`** — turns a violation report into an ordered, multi-deploy remediation plan
+- **`predict`** — estimates lock durations and blast radius from production statistics
+- **`template`** — generates known-safe migration skeletons for common changes
+- **`precommit`** command, `.pre-commit-hooks.yaml`, and the `migrationpilot-precommit` launcher package
+- **Zero-config framework detection** — `check` recognizes 14 frameworks from the repo layout; `--framework` and `--from-command` for explicit control
+- **`--fail-on irreversible`** and rollback grading — gate on migrations that cannot be rolled back
+- **Auto-fix grew from 12 to 20 rules** — MP005, MP012, MP025, MP038, MP039, MP042, MP074, MP077 join `--fix`
+- **MCP `check_before_apply`** — the gate an agent calls before writing or running DDL. Resolves the project's own config exactly like the CLI and returns a `pass`/`fail` verdict with the blocking rule IDs named
+- **MCP `analyze_migration_dir`** and **MCP `get_rule`**
+- **Claude Code plugin** (`integrations/claude-code/`) — a migration-safety skill plus a `PreToolUse` hook that blocks unsafe DDL before it lands. Fails open when MigrationPilot is unavailable
+- **Cursor and Copilot instruction files** (`integrations/cursor/`, `integrations/copilot/`)
+- **Docker image** (`ghcr.io/mickelsamuel/migrationpilot`), **single-file binaries** on GitHub Releases, a **GitLab CI template** (`integrations/gitlab/`), and a **Homebrew formula**
+- **The Migration Safety Handbook** (`docs/handbook/`) — 20 chapters; every lab executed on real PostgreSQL 17 and 18
+- **Published benchmark** (`bench/`) — 56-file labelled corpus, ground-truth scoring, results and misses published; `node bench/run.mjs` reproduces it
+- **The lock-queue lab** (`labs/lock-queue/`) — measured traces of a blocking vs. safe schema change on PostgreSQL 18.4 with raw data and reproduction scripts
+
+### Changed
+- **Everything is free.** The Pro tier is gone from the code, not just the pricing page: the Action no longer strips rules without a license key, the 3-per-month production-context meter is deleted, and no command prints an upsell. 97 rules run offline; 15 read production context via `--database-url`; a license key is accepted for compatibility but decides nothing
+- **The risk headline now weighs violations.** Any critical finding drives the score to RED (one critical = 70, four or more = 100); warnings alone cap at YELLOW. Previously the headline could not reach RED without a database connection, whatever the findings said. Exit codes are unchanged. Semantics documented in `docs/risk-scoring.md`
+- **Precision pass on five rules** after benchmark review: MP058 no longer asks you to merge ALTERs the handbook requires apart; MP070/MP097 settle index ownership from evidence; MP003 names the real default expression and describes the rewrite truthfully; MP090 skips the expand-contract sync-trigger pattern
+- Statement kind is now detected from the parse tree, never the leading keyword — a comment above `BEGIN` no longer disables transaction-aware rules
+
+### Fixed
+- **Plain DML no longer classifies as ACCESS EXCLUSIVE.** The lock classifier fell through to the worst case for anything it didn't recognize, so a bare `SELECT` was reported as a critical lock hazard. SELECT now takes ACCESS SHARE (ROW SHARE with a locking clause); INSERT/UPDATE/DELETE/MERGE take ROW EXCLUSIVE; COPY follows its direction
+- **MP043 read the wrong parser subtype** — it missed the `ALTER DOMAIN ADD CONSTRAINT` it is named for and fired on `SET DEFAULT` instead; `NOT VALID` domain constraints are now the recognized escape hatch
+- **MP052's rename branch was unreachable** — it never fired on `ALTER TABLE ... RENAME COLUMN`; it does now
+- **MP048 matched 'now' as a substring**, so `SET DEFAULT 'nowhere'` was flagged as volatile; it now walks the parsed expression, and also recognizes `CURRENT_TIMESTAMP`-family keywords as the volatile calls they are
+- **MP046's fixer emitted SQL the server rejects** (`DETACH PARTITION CONCURRENTLY p` — the keyword goes after the partition name)
+- **Violation line numbers** — wrong since v1.1.0 for any statement not starting at the file's first line; also fixed in SARIF (Code Scanning annotated the wrong lines), PR comments, JSON output, and the VS Code extension. Statements sharing a line no longer swap violations; MP061–MP066 no longer hardcode line 1
+- **License key expiry** was stamped from local date parts but parsed as UTC, expiring keys a day early west of Greenwich
+- PR comments: multi-line statements no longer break the report table; the footer states what `--database-url` adds instead of advertising a discontinued trial
+- MP040's fixer emitted invalid SQL for `TIMESTAMPTZ` columns; MP023's fixer output now parses
+- Sequence summaries pluralize correctly
+
+## [1.5.1] - 2026-08-11
+
+### Fixed
+- Windows: prevent a libuv `UV_HANDLE_CLOSING` crash on multi-statement analyze
+- Checkout fulfillment: send product metadata so the webhook issues license keys, email the expiry the key was actually signed with, and retry delivery when the license email fails
+- Publish workflow no longer masks npm publish failures
+
+### Added
+- `migrationpilot-mcp` launcher package on npm — `npx migrationpilot-mcp` starts the MCP server
+- Experimental `mutation-test` command — mutates known-good migrations into dangerous near-neighbours and reports which ones your current config would allow
+- `/playground` now runs the full 83-rule analysis client-side in the browser; SQL never leaves the page
+
+### Changed
+- All 83 rules are free, including the production-context rules (MP013, MP014, MP019); Pro/Team plans replaced by a single per-organization plan
+- Dependency refresh across CLI, site, and VS Code extension; all security advisories cleared
+
+## [1.5.0] - 2026-03-07
+
+### New Rules (3 rules, 80 → 83 total)
+
+**PostgreSQL 18 Support (MP081, MP082, MP083)**:
+- **MP081** `prefer-pg18-not-null-not-valid` — On PG18+, use native `SET NOT NULL NOT VALID` instead of the old CHECK constraint workaround
+- **MP082** `warn-not-enforced-constraint` — Warn when using `NOT ENFORCED` constraints (PG18+), which skip validation entirely
+- **MP083** `warn-fk-nondeterministic-collation` — Detect foreign keys on columns using non-deterministic (ICU) collations, which PG18 rejects
+
+### Blog
+
+- New article: "PostgreSQL 18 Changed NOT NULL — Update Your Migration Rules"
+
+## [1.4.1] - 2026-03-02
+
+### Security
+
+- **Plugin loader** — Enforce project root boundary on plugin paths to prevent directory traversal
+- **Auth tokens** — Reject unencrypted legacy tokens (forces re-login for old token format)
+- **VS Code extension** — Disable trusted markdown mode in hover tooltips (prevents command URI injection)
+- **GitHub Action** — Sanitize glob patterns to prevent regex injection and ReDoS
+- **GitHub Action** — Mask database-url in Actions logs via `core.setSecret()`
+- **GitHub Action** — Block fork PRs from running local action in migration-check workflow
+- **Playground** — Add 50KB input size limit and sanitize parser error messages
+- **Production queries** — Escape regex metacharacters in table names for `pg_stat_statements` queries
+- **Pre-commit hook** — Fix unquoted shell variable to prevent word-splitting on filenames with spaces
+- **Dependencies** — Patch rollup path traversal (GHSA-mw96-cpmx-2vgc), minimatch ReDoS, hono auth bypass via pnpm overrides
+- **CI** — Pin mcp-publisher binary to specific release version instead of `latest`
+
+### Improvements
+
+- **MCP Registry support** — Added `server.json` and `mcpName` field for official MCP Registry listing
+- **CI** — Added automated MCP Registry publishing to release workflow
+
+## [1.4.0] - 2026-02-20
+
+### New Rules (14 rules, 66 → 80 total)
+
+**Lock Safety (MP069, MP072, MP073)**:
+- **MP069**: warn-fk-lock-both-tables - FK constraint locks both source and referenced table simultaneously
+- **MP072**: warn-partition-default-scan - `ATTACH PARTITION` scans DEFAULT partition under lock
+- **MP073**: ban-superuser-role - `ALTER SYSTEM` / `CREATE ROLE SUPERUSER` in migrations is dangerous
+
+**Data Safety (MP067, MP071, MP080)**:
+- **MP067**: warn-backfill-no-batching - `DELETE` without WHERE clause locks entire table and bloats WAL
+- **MP071**: ban-rename-in-use-column - `RENAME COLUMN` without updating dependent views/functions
+- **MP080**: ban-data-in-migration - DML (INSERT/UPDATE/DELETE) mixed with DDL in same migration
+
+**Best Practices (MP068, MP070, MP074-MP079)**:
+- **MP068**: warn-integer-pk-capacity - `CREATE SEQUENCE AS integer` risks overflow — use `bigint`
+- **MP070**: warn-concurrent-index-invalid - `CREATE INDEX CONCURRENTLY` can leave invalid index on failure
+- **MP074**: require-deferrable-fk - FK constraints should be `DEFERRABLE` for bulk loading
+- **MP075**: warn-toast-bloat-risk - `UPDATE` on TOAST columns causes bloat from full-row copies
+- **MP076**: warn-xid-consuming-retry - `SAVEPOINT` creates subtransactions consuming XIDs rapidly
+- **MP077**: prefer-lz4-toast-compression - Use `lz4` over `pglz` for TOAST compression (PG 14+)
+- **MP078**: warn-extension-version-pin - `CREATE EXTENSION` without `VERSION` is non-deterministic
+- **MP079**: warn-rls-policy-completeness - RLS policies don't cover all operations
+
+### New Features
+
+**VS Code Extension** (`vscode-migrationpilot/`):
+- Real-time diagnostics on save with severity-mapped squiggles
+- Hover tooltips showing rule details, why it matters, safe alternatives
+- Quick fix actions for 12 auto-fixable rules + inline disable comments
+- Configurable PG version, rule exclusion, and file patterns
+- 130KB bundled with esbuild
+
+**Browser Playground** (`site/src/app/playground/`):
+- Interactive SQL editor with 5 example migrations
+- Server-side analysis via Next.js Server Actions
+- PG version selector (10-20), risk badges, violation cards
+- Zero data storage — runs entirely on Vercel
+
+**Analysis Features**:
+- **Schema state simulation** — In-memory DDL replay tracking tables, columns, indexes, constraints, sequences
+- **Cross-migration dependency graph** — Directed edges between files, cycle detection via DFS, orphan identification
+- **Migration duration prediction** — Heuristic-based estimates calibrated with table stats (row count, size, indexes)
+- **Lock queue simulation** — Models blocked operations, queue buildup time, and actionable recommendations
+- **Trigger cascade analysis** — Static and DB-backed cascade chain discovery with depth limits
+- **Sequence overflow monitoring** — Static analysis of CREATE SEQUENCE types + DB-backed current value checking
+
+**Expand-Contract Templates** (`template` command):
+- 5 operations: `rename-column`, `change-type`, `split-table`, `add-not-null`, `remove-column`
+- 3-phase output (expand, migrate, contract) with proper timeouts and batch processing
+- `--phase` flag to output a single phase
+
+**Custom Rules Engine** (`src/plugins/`):
+- ESLint-style plugin loading from local files or npm packages
+- Validates rule IDs to prevent collision with built-in `MP` prefix
+- Default severity assignment for plugins missing severity field
+
+**Shareable Config Presets** (5 total):
+- `migrationpilot:recommended` — Default balanced settings
+- `migrationpilot:strict` — All 83 rules at critical severity
+- `migrationpilot:ci` — CI-optimized defaults
+- `migrationpilot:startup` — Disables nitpicky rules for early-stage teams
+- `migrationpilot:enterprise` — Maximum safety with audit logging and lower thresholds
+
+**Enterprise Features**:
+- **Team management** — Org-level seat tracking, member registration, activity logging, centralized config fetching
+- **Policy enforcement** — Required rules, severity floors, blocked SQL patterns, review-required patterns
+- **SSO authentication** — Device code flow for CLI login, API key auth, token management
+- `team` command — Show organization status, seats, members, and recent activity
+- `login` / `logout` commands — Authenticate via SSO or API key
+- `policy` command — Check migration files against organization policies
+- `team` and `policy` config sections in `.migrationpilotrc.yml`
+
+**CLI Improvements**:
+- `template` command — Generate expand-contract migration templates
+- `predict` command — Estimate migration duration with optional table stats
+- Next-step suggestions after analysis (Rust compiler-inspired)
+- 20 commands total (was 14)
+
+**Pricing Restructure**:
+- Pro: $29 → $19/month ($24 → $16/month annual)
+- New Team tier: $49/month ($42/month annual), up to 10 seats
+- 4-tier structure: Free, Pro, Team, Enterprise
+
+### Quality
+- 970+ tests across 54 test files
+- Build clean: CLI 1.0MB, Action 1.6MB, API 390KB, MCP 1.2MB
+- Typecheck clean, lint clean
+- 14 new rule documentation pages (docs/rules/MP067-MP080.md)
+- 17 VS Code extension tests
+- 33 enterprise feature tests (team, policy, SSO)
+
+## [1.3.0] - 2026-02-19
+
+### New Rules (18 rules, 48 → 66 total)
+
+**Lock Safety (MP049, MP055)**:
+- **MP049**: require-partition-key-in-pk - Partitioned table PK must include all partition key columns
+- **MP055**: drop-pk-replica-identity-break - Dropping PK breaks logical replication when table uses default REPLICA IDENTITY
+
+**Best Practices (MP050-MP051, MP056, MP058-MP059)**:
+- **MP050**: prefer-hnsw-over-ivfflat - HNSW provides better recall without training data or reindexing
+- **MP051**: require-spatial-index - Spatial/geometry columns need GIST or SP-GIST indexes
+- **MP056**: gin-index-on-jsonb-without-expression - Plain GIN index on JSONB column useless for ->> operator queries
+- **MP058**: multi-alter-table-same-table - Multiple ALTER TABLE on same table causes unnecessary lock cycles
+- **MP059**: sequence-not-reset-after-data-migration - INSERT with explicit IDs without setval() causes duplicate key errors
+
+**Dependency & Transaction Safety (MP052-MP054)**:
+- **MP052**: warn-dependent-objects - DROP/ALTER COLUMN may break views, functions, or triggers
+- **MP053**: ban-uncommitted-transaction - BEGIN without matching COMMIT leaves open transaction
+- **MP054**: alter-type-add-value-in-transaction - New enum value not visible until COMMIT
+
+**Replication Safety (MP057, MP060)**:
+- **MP057**: rls-enabled-without-policy - ENABLE ROW LEVEL SECURITY without CREATE POLICY silently denies all access
+- **MP060**: alter-type-rename-value - RENAME VALUE breaks logical replication subscribers
+
+**Performance (MP061)**:
+- **MP061**: suboptimal-column-order - Variable-length columns before fixed-size columns wastes alignment padding
+
+**Safety (MP062)**:
+- **MP062**: ban-add-generated-stored-column - Adding a stored generated column causes full table rewrite under ACCESS EXCLUSIVE lock
+
+**Static Analysis (MP063)**:
+- **MP063**: warn-do-block-ddl - DO block contains DDL that bypasses static analysis — lock impact cannot be determined
+
+**Operations Safety (MP064-MP065)**:
+- **MP064**: ban-disable-trigger - DISABLE TRIGGER breaks replication, audit logs, and FK enforcement
+- **MP065**: ban-lock-table - Explicit LOCK TABLE blocks queries and can cause deadlocks
+
+**Maintenance (MP066)**:
+- **MP066**: warn-autovacuum-disabled - Disabling autovacuum causes table bloat and risks transaction ID wraparound
+
+### New Commands
+- `doctor` - Diagnostic checks (Node version, config, latest version, framework, license)
+- `completion <shell>` - Shell completion scripts for bash, zsh, and fish
+- `drift` - Compare two database schemas to detect drift between environments
+- `trends` - Historical analysis of migration safety trends over time
+- `explain <rule>` - Show detailed information about a specific rule
+- `rollback <file>` - Generate reverse DDL for migration rollback
+
+### New Features
+- **MCP Server** — Model Context Protocol server with 4 tools (`analyze_migration`, `suggest_fix`, `explain_lock`, `list_rules`) for AI assistant integration
+- **Schema Drift Detection** — Compare two database schemas via `information_schema` to find missing tables, columns, indexes, and constraints
+- **Historical Analysis** — JSONL-based storage of analysis results with trend computation
+- **Audit Logging** — JSONL event log for enterprise compliance, configurable path, CI/user/timestamp enrichment
+- **Air-Gapped Mode** — `--offline` flag skips update checks and production context for regulated environments
+- **Free Usage Tracking** — 3 production analyses per month on free tier with contextual upgrade prompts
+- **14-Day Free Trial** — Pro trial via Stripe Checkout with no credit card required upfront
+- **Annual Pricing** — ~17% discount ($24/mo billed annually vs $29/mo monthly)
+- **Shell Completions** — bash, zsh, and fish completion scripts via `migrationpilot completion`
+- **Star Prompt** — One-time "Star on GitHub" message after first analysis with violations (suppressed in CI)
+- **Update Checker** — npm registry version check with 24h cache in `~/.migrationpilot/`
+
+### New Auto-Fixes (6 → 12 rules)
+- **MP021**: `REINDEX` → `REINDEX CONCURRENTLY`
+- **MP023**: `CREATE TABLE/INDEX` → `CREATE TABLE/INDEX IF NOT EXISTS`
+- **MP037**: `VARCHAR(n)` → `TEXT`
+- **MP040**: `TIMESTAMP` → `TIMESTAMPTZ`
+- **MP041**: `CHAR(n)` → `TEXT`
+- **MP046**: `DETACH PARTITION` → `DETACH PARTITION CONCURRENTLY`
+
+### CLI Improvements
+- `--output <file>` flag on `analyze` and `check` — write report to file while showing summary on stdout
+- `--offline` flag on `analyze` and `check` commands for air-gapped deployment
+- `--no-config` flag to skip config file loading
+- `init --preset <name>` flag for quick configuration (recommended, strict, ci)
+- `init --force` flag to overwrite existing config files
+- Config file validation — warns on unknown keys in `.migrationpilotrc.yml`
+- Post-analysis messages (update check, star prompt) with CI-aware suppression
+
+### GitHub Action Improvements
+- **Inline annotations** — violations appear directly in the PR diff "Files changed" tab
+- **Job Summary** — rich markdown summary with metrics and violations table in the Actions tab
+- New `exclude` input — comma-separated list of rules to skip (e.g. `MP001,MP004`)
+- New `config-file` input — path to `.migrationpilotrc.yml` (auto-detected if not specified)
+- Config-driven severity overrides in Action context
+- Expired license warning with renewal link
+- Paginated PR comment lookup (handles repos with 100+ comments)
+
+### Programmatic API
+- New exports: `autoFix`, `isFixable` (auto-fix engine), `detectFrameworks` (framework detection)
+
+### Documentation
+- 31 documentation pages on landing site (6 core docs + 14 framework guides + 9 provider guides + rules index + pricing)
+- Dedicated `/pricing` page with tier comparison, annual toggle, and FAQ
+- Rules index page (`/docs/rules`) with all 66 rules categorized
+- `/migrate-from-atlas` landing page — rule mapping, feature comparison, migration guide
+- `/migrate-from-squawk` landing page — 25-rule mapping, 18-feature comparison, migration guide
+- Enterprise landing page with security, compliance, SLA details
+- GitLab CI and Bitbucket Pipelines example configurations
+- Rule documentation for MP049-MP066 (18 files)
+
+### Quality
+- 781+ tests across 48 test files
+- 33 E2E CLI tests covering all major commands, flags, and performance
+- 31 fixer tests covering all 12 auto-fix rules
+- 20 MCP server tests covering all 4 tools
+- 12 new rule tests for MP052-MP054
+- 21 new rule tests for MP055-MP060
+- 19 config tests including validation warnings and auditLog support
+- Build clean: CLI 923KB, Action 1.5MB, API 274KB, MCP 1.2MB
+- Site: 100+ pages (66 rules + 31 docs + enterprise + billing + migrate-from-atlas + migrate-from-squawk + misc)
+
+## [1.2.0] - 2026-02-16
+
+### Security
+- Switch license key signing from HMAC-SHA256 to Ed25519 asymmetric cryptography
+- Remove Pro rules from programmatic API exports (only free rules publicly accessible)
+- Add security headers to landing page (CSP, HSTS, X-Frame-Options, Referrer-Policy)
+- Add CORS headers restricting API endpoints to migrationpilot.dev origin
+- Fix error message leakage in checkout, billing-portal, and webhook APIs
+- Add rate limiting and email validation to billing-portal endpoint
+- Remove dist/ and internal config files from public repository
+
+### Improvements
+- Add expired license warning with renewal link across all CLI commands
+- Add `--license-key` option to watch mode for Pro features
+- Drop Node 20 from CI matrix (EOL April 2026), require Node >= 22
+
+## [1.1.0] - 2026-02-13
+
+### New Rules (23 rules, 25 → 48 total)
+
+**Lock Safety (MP026-MP033)**:
+- **MP026**: ban-drop-table - DROP TABLE permanently removes table and data
+- **MP027**: disallowed-unique-constraint - UNIQUE constraint without USING INDEX scans full table
+- **MP028**: no-rename-table - Renaming tables breaks queries, views, FKs
+- **MP029**: ban-drop-not-null - DROP NOT NULL may break app assumptions
+- **MP030**: require-not-valid-check - CHECK constraint without NOT VALID (auto-fixable)
+- **MP031**: ban-exclusion-constraint - EXCLUSION constraint under ACCESS EXCLUSIVE
+- **MP032**: ban-cluster - CLUSTER rewrites table under ACCESS EXCLUSIVE
+- **MP033**: require-concurrent-refresh-matview - REFRESH MATERIALIZED VIEW without CONCURRENTLY (auto-fixable)
+
+**Data Safety (MP034-MP036)**:
+- **MP034**: ban-drop-database - DROP DATABASE in migration files
+- **MP035**: ban-drop-schema - DROP SCHEMA permanently removes schema
+- **MP036**: ban-truncate-cascade - TRUNCATE CASCADE across FK-referencing tables
+
+**Best Practices (MP037-MP045, MP048)**:
+- **MP037**: prefer-text-over-varchar - VARCHAR(n) has no benefit over TEXT in PostgreSQL
+- **MP038**: prefer-bigint-over-int - INT PK/FK can overflow, use BIGINT
+- **MP039**: prefer-identity-over-serial - SERIAL quirks, use GENERATED ALWAYS AS IDENTITY
+- **MP040**: prefer-timestamptz - TIMESTAMP without TZ causes timezone bugs
+- **MP041**: ban-char-field - CHAR(n) wastes space and causes comparison bugs
+- **MP042**: require-index-name - Unnamed indexes are hard to reference
+- **MP043**: ban-domain-constraint - Domain constraints validate against ALL using columns
+- **MP044**: no-data-loss-type-narrowing - Narrowing column type risks data loss
+- **MP045**: require-primary-key - Tables without PK break replication
+- **MP048**: ban-alter-default-volatile - Volatile SET DEFAULT on existing column is misleading
+
+**Advanced (MP046-MP047)**:
+- **MP046**: require-concurrent-detach-partition - DETACH PARTITION without CONCURRENTLY (PG 14+)
+- **MP047**: ban-set-logged-unlogged - SET LOGGED/UNLOGGED rewrites entire table
+
+### Auto-fix
+- 2 new auto-fixable rules: MP030 (NOT VALID on CHECK) and MP033 (CONCURRENTLY on matview refresh)
+- Total auto-fixable rules: 6 (MP001, MP004, MP009, MP020, MP030, MP033)
+
+### CLI Improvements
+- New `list-rules` command with `--json` option
+- `--exclude <rules>` flag to skip specific rules (comma-separated)
+- Enriched `--version` output (node version, platform, rule count)
+- `NO_COLOR` env var and `TERM=dumb` detection for color disabling
+
+### PG-Version-Aware Rule Updates
+- MP002: PG 18+ recommends `SET NOT NULL NOT VALID` + `VALIDATE NOT NULL`
+- MP003: PG 11+ note about volatile vs non-volatile defaults
+- MP015: PG 10+ recommends `GENERATED ALWAYS AS IDENTITY` over SERIAL
+- MP018: PG 18+ recommends `NOT NULL NOT VALID` approach
+- MP039: Only flags on PG >= 10 (IDENTITY not available before)
+- MP046: Only flags on PG >= 14 (DETACH CONCURRENTLY not available before)
+
+### Config
+- `extends` field for shareable config presets
+- 3 built-in presets: `migrationpilot:recommended`, `migrationpilot:strict`, `migrationpilot:ci`
+- Strict preset: all rules at critical severity, fail on warning
+
+### Package Metadata
+- Added `bugs`, `funding`, `packageManager` fields
+- Expanded keywords for npm discoverability
+- Fixed TypeScript resolution order in exports (`types` before `import`)
+
+### Documentation
+- Complete README rewrite with all 48 rules, comparison table, all features
+- Per-rule documentation in `docs/rules/` (48 files)
+- Landing page updated with v1.1.0, 48 rules, 9 feature cards, grouped rules display
+- `.env.example` and `.editorconfig` added
+
+### Quality
+- 550+ tests across 31 test files
+- All 23 new rules have full test coverage
+- Build clean: CLI 835KB, Action 1.2MB, API 219KB
+
+---
+
+## [1.0.0] - 2026-02-12
+
+### Core Engine
+- DDL parser powered by libpg-query (WASM) for accurate PostgreSQL AST analysis
+- Lock type classifier mapping every DDL operation to its PostgreSQL lock level
+- Risk scoring engine with RED/YELLOW/GREEN levels based on lock impact and production context
+
+### Safety Rules (25 rules)
+- **MP001**: require-concurrent-index - CREATE INDEX must use CONCURRENTLY
+- **MP002**: require-check-not-null - SET NOT NULL needs CHECK constraint pattern
+- **MP003**: volatile-default-rewrite - Volatile defaults cause full table rewrite (PG < 11)
+- **MP004**: require-lock-timeout - DDL must have lock_timeout set
+- **MP005**: require-not-valid-fk - Foreign keys must use NOT VALID + VALIDATE
+- **MP006**: no-vacuum-full - VACUUM FULL blocks all queries
+- **MP007**: no-column-type-change - Column type changes rewrite the table
+- **MP008**: no-multi-ddl-transaction - Multiple DDL in one transaction compounds lock time
+- **MP009**: require-concurrent-drop-index - DROP INDEX should use CONCURRENTLY
+- **MP010**: no-rename-column - Renaming columns breaks running queries
+- **MP011**: no-add-column-default-volatile - Volatile defaults on existing columns cause rewrite
+- **MP012**: no-enum-add-value-in-transaction - ALTER TYPE ADD VALUE cannot run in a transaction
+- **MP013**: high-traffic-table-ddl - DDL on high-traffic tables (Pro)
+- **MP014**: large-table-ddl - DDL on tables > threshold rows (Pro)
+- **MP015**: no-add-column-serial - SERIAL creates implicit sequence with ACCESS EXCLUSIVE
+- **MP016**: require-index-on-fk - Foreign key columns need indexes
+- **MP017**: no-drop-column - DROP COLUMN acquires ACCESS EXCLUSIVE lock
+- **MP018**: no-force-set-not-null - SET NOT NULL needs CHECK pattern on PG 12+
+- **MP019**: no-exclusive-lock-high-connections - ACCESS EXCLUSIVE with many active connections (Pro)
+- **MP020**: require-statement-timeout - Long-running DDL needs statement_timeout
+- **MP021**: require-concurrent-reindex - REINDEX needs CONCURRENTLY on PG 12+
+- **MP022**: no-drop-cascade - CASCADE silently drops dependent objects
+- **MP023**: require-if-not-exists - CREATE TABLE/INDEX need IF NOT EXISTS
+- **MP024**: no-enum-value-removal - DROP TYPE destroys enum and dependent columns
+- **MP025**: ban-concurrent-in-transaction - CONCURRENTLY in transaction always fails
+
+### CLI
+- 7 commands: `analyze`, `check`, `plan`, `init`, `detect`, `watch`, `hook`
+- Output formats: text (default), JSON (structured schema), SARIF v2.1.0, markdown
+- Modes: `--quiet` (gcc-style), `--verbose` (per-statement), `--stdin` (pipe input)
+- Auto-fix with `--fix` and `--fix --dry-run` (MP001, MP004, MP009, MP020)
+- `--no-color` flag for CI environments
+- Config file support (`.migrationpilotrc.yml`)
+- Inline disable comments (`-- migrationpilot-disable MP001`)
+- Rule metadata: every violation includes "Why this matters" explanation and docs URL
+- Performance timing in output footer
+
+### GitHub Action
+- Analyzes migration files changed in PRs
+- Posts/updates safety report as PR comment
+- SARIF output for GitHub Code Scanning integration
+- Configurable fail threshold (critical/warning/never)
+
+### Production Context (Pro tier)
+- Query impact analysis via pg_stat_statements
+- Table size awareness via pg_class/pg_stat_user_tables
+- Active connection monitoring via pg_stat_activity
+- Read-only: only queries pg_catalog system views
+
+### Developer Experience
+- Programmatic API: `import { analyzeSQL } from 'migrationpilot'`
+- TypeScript declarations included
+- Migration framework auto-detection (14 frameworks)
+- Watch mode with debounced file monitoring
+- Git pre-commit hook installer (standalone + husky)
+- Execution plan visualization with duration estimates
+- Transaction boundary analysis
+- Migration ordering validation
+
+### Billing
+- Stripe Checkout integration for Pro subscriptions
+- HMAC-SHA256 license key validation (client-side, no telemetry)
+- Webhook-driven key generation with Resend email delivery
+
+### Quality
+- 451 tests across 26 test files
+- E2E tests spawning the actual CLI binary
+- Snapshot tests for output format stability
+- TypeScript strict mode with noUncheckedIndexedAccess
+- ESLint clean, zero security vulnerabilities
+
+[1.4.0]: https://github.com/mickelsamuel/migrationpilot/compare/v1.2.0...v1.4.0
+[1.2.0]: https://github.com/mickelsamuel/migrationpilot/compare/v1.1.0...v1.2.0
+[1.1.0]: https://github.com/mickelsamuel/migrationpilot/compare/v1.0.0...v1.1.0
+[1.0.0]: https://github.com/mickelsamuel/migrationpilot/releases/tag/v1.0.0

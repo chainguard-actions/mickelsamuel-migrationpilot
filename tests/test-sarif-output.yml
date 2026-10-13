@@ -1,0 +1,86 @@
+name: Test SARIF output behavior
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create a migration with violations
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/test-migrations"
+          cat > "$GITHUB_WORKSPACE/test-migrations/001_violations.sql" <<'EOF'
+          CREATE INDEX idx_users_email ON users (email);
+          ALTER TABLE orders ADD CONSTRAINT orders_ref_unique UNIQUE (ref_id);
+          EOF
+
+      - id: action
+        uses: .
+        with:
+          migration-path: "test-migrations/*.sql"
+          github-token: ${{ github.token }}
+          fail-on: never
+        continue-on-error: true
+
+      - name: Assert action succeeded
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" = "failure" ]; then
+            echo "FAIL: action failed unexpectedly with fail-on: never"
+            exit 1
+          fi
+          echo "PASS: action succeeded"
+
+      - name: Assert risk-level and violations outputs are set
+        env:
+          RISK: ${{ steps.action.outputs.risk-level }}
+          VIOLATIONS: ${{ steps.action.outputs.violations }}
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          echo "risk-level: $RISK"
+          echo "violations: $VIOLATIONS"
+
+          if [ "$OUTCOME" != "success" ]; then
+            echo "SKIP: action did not succeed"
+            exit 0
+          fi
+
+          if [ -z "$RISK" ]; then
+            echo "FAIL: risk-level output is empty"
+            exit 1
+          fi
+
+          if [ -z "$VIOLATIONS" ]; then
+            echo "FAIL: violations output is empty"
+            exit 1
+          fi
+
+          echo "PASS: risk-level='$RISK' violations='$VIOLATIONS'"
+
+      - name: Assert SARIF output behavior
+        env:
+          SARIF: ${{ steps.action.outputs.sarif-file }}
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          echo "sarif-file: $SARIF"
+
+          if [ "$OUTCOME" != "success" ]; then
+            echo "SKIP: action did not succeed"
+            exit 0
+          fi
+
+          # Under workflow_dispatch (no PR), the action exits early and does NOT
+          # write a SARIF file. The sarif-file output will be empty.
+          if [ -z "$SARIF" ]; then
+            echo "PASS: sarif-file output is empty (expected for non-PR workflow_dispatch run)"
+          else
+            if [ ! -f "$SARIF" ]; then
+              echo "FAIL: sarif-file output is set to '$SARIF' but file does not exist"
+              exit 1
+            fi
+            python3 -c "import json,sys; json.load(open(sys.argv[1])); print('PASS: valid JSON')" "$SARIF" || { echo "FAIL: SARIF file is not valid JSON"; exit 1; }
+          fi

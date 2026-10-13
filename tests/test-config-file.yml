@@ -1,0 +1,79 @@
+name: Test config-file input
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create migration and config files
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/test-migrations"
+          mkdir -p "$GITHUB_WORKSPACE/test-config"
+
+          # Create a migration file
+          cat > "$GITHUB_WORKSPACE/test-migrations/001_create.sql" <<'EOF'
+          CREATE TABLE IF NOT EXISTS products (id SERIAL PRIMARY KEY, name TEXT NOT NULL);
+          EOF
+
+          # Create a config file
+          cat > "$GITHUB_WORKSPACE/test-config/.migrationpilotrc.yml" <<'EOF'
+          pgVersion: 16
+          failOn: never
+          EOF
+
+      - id: action
+        uses: .
+        with:
+          migration-path: "test-migrations/*.sql"
+          github-token: ${{ github.token }}
+          config-file: "test-config/.migrationpilotrc.yml"
+        continue-on-error: true
+
+      - name: Assert action ran with config file
+        env:
+          RISK: ${{ steps.action.outputs.risk-level }}
+          VIOLATIONS: ${{ steps.action.outputs.violations }}
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          echo "risk-level: $RISK"
+          echo "violations: $VIOLATIONS"
+
+          # Under workflow_dispatch (no PR), the action exits early with GREEN/0.
+          # The config file is loaded before the PR check, so a valid config file
+          # should not cause a failure.
+          if [ "$OUTCOME" = "failure" ]; then
+            echo "FAIL: action failed unexpectedly — config file is valid"
+            exit 1
+          fi
+
+          if [ -z "$RISK" ]; then
+            echo "FAIL: risk-level output is empty"
+            exit 1
+          fi
+
+          echo "PASS: action ran with config-file, risk-level='$RISK' violations='$VIOLATIONS'"
+
+      - name: Test that a non-existent config file fails the run
+        id: action-bad-config
+        uses: .
+        with:
+          migration-path: "test-migrations/*.sql"
+          github-token: ${{ github.token }}
+          config-file: "nonexistent/.migrationpilotrc.yml"
+          fail-on: never
+        continue-on-error: true
+
+      - name: Assert action failed for non-existent config file
+        env:
+          OUTCOME: ${{ steps.action-bad-config.outcome }}
+        run: |
+          echo "outcome (bad config): $OUTCOME"
+          if [ "$OUTCOME" = "success" ]; then
+            echo "FAIL: action should have failed for a non-existent config file"
+            exit 1
+          fi
+          echo "PASS: action correctly failed for non-existent config file"

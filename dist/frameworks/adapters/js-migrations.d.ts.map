@@ -1,0 +1,1 @@
+{"version":3,"file":"js-migrations.d.ts","sourceRoot":"","sources":["../../../src/frameworks/adapters/js-migrations.ts"],"names":[],"mappings":"AAAA;;;;;;;;;GASG;AAIH,OAAO,KAAK,EAAE,OAAO,EAAkE,MAAM,YAAY,CAAC;AA4F1G,eAAO,MAAM,cAAc,EAAE,OAAkC,CAAC;AAChE,eAAO,MAAM,gBAAgB,EAAE,OAAoC,CAAC;AACpE,eAAO,MAAM,WAAW,EAAE,OAA+B,CAAC"}

@@ -1,0 +1,74 @@
+name: Test directory as migration-path
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create multiple safe migration files in a directory
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/db/migrations"
+          cat > "$GITHUB_WORKSPACE/db/migrations/001_create_products.sql" <<'EOF'
+          CREATE TABLE IF NOT EXISTS products (
+            id SERIAL PRIMARY KEY,
+            name TEXT NOT NULL,
+            price NUMERIC(10,2) NOT NULL
+          );
+          EOF
+          cat > "$GITHUB_WORKSPACE/db/migrations/002_create_categories.sql" <<'EOF'
+          CREATE TABLE IF NOT EXISTS categories (
+            id SERIAL PRIMARY KEY,
+            label TEXT NOT NULL
+          );
+          EOF
+
+      - id: action
+        uses: .
+        with:
+          migration-path: "db/migrations"
+          github-token: ${{ github.token }}
+          fail-on: never
+        continue-on-error: true
+
+      - name: Assert action ran and produced outputs
+        env:
+          RISK: ${{ steps.action.outputs.risk-level }}
+          VIOLATIONS: ${{ steps.action.outputs.violations }}
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          echo "risk-level: $RISK"
+          echo "violations: $VIOLATIONS"
+
+          # Under workflow_dispatch (no PR), the action exits early with GREEN/0.
+          # A directory path is still accepted as a valid migration-path input.
+          if [ "$OUTCOME" = "failure" ]; then
+            echo "FAIL: action failed unexpectedly with fail-on: never"
+            exit 1
+          fi
+
+          if [ -z "$RISK" ]; then
+            echo "FAIL: risk-level output is empty"
+            exit 1
+          fi
+
+          echo "PASS: directory migration-path accepted, risk-level='$RISK' violations='$VIOLATIONS'"
+
+      - name: Assert violations output is set
+        env:
+          VIOLATIONS: ${{ steps.action.outputs.violations }}
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          echo "violations: $VIOLATIONS"
+          if [ "$OUTCOME" != "success" ]; then
+            echo "SKIP: action did not succeed"
+            exit 0
+          fi
+          if [ -z "$VIOLATIONS" ]; then
+            echo "FAIL: violations output is empty"
+            exit 1
+          fi
+          echo "PASS: violations output is set: '$VIOLATIONS'"

@@ -1,6 +1,16 @@
 {
   "owner": "mickelsamuel",
   "repo": "migrationpilot",
-  "version": "",
-  "url": "https://github.com/mickelsamuel/migrationpilot"
+  "version": "v1.6.4",
+  "commit_sha": "a203f1ecf4d4edcd747b747d63352c031f55cfd7",
+  "url": "https://github.com/mickelsamuel/migrationpilot",
+  "policy_sha": "d636be7e43ef829af6e853da6b3c7566db9f72fe",
+  "test_policy_sha": "843adf9e4b8f85d0c08b27b9d0b09dd094b54702",
+  "test_agent_version": "2",
+  "harden_agent_version": "2",
+  "node_artifact": {
+    "gcs_uri": "gs://prod-actions-node-artifacts/node-artifacts/mickelsamuel/migrationpilot/v1.6.4/sha256-9f3ee9ff034f794711030a7022ca36ac97e1b3d3f65707cae1db304cafdaee6a.tar.gz",
+    "sha256": "9f3ee9ff034f794711030a7022ca36ac97e1b3d3f65707cae1db304cafdaee6a",
+    "size_bytes": 2312812
+  }
 }
