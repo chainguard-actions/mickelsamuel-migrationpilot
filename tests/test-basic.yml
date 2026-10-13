@@ -1,0 +1,46 @@
+name: Test basic usage (non-PR context)
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create a migration file
+        run: |
+          mkdir -p tests/fixtures/migrations
+          cat > tests/fixtures/migrations/001_create_users.sql << 'EOF'
+          CREATE TABLE users (
+            id SERIAL PRIMARY KEY,
+            email TEXT NOT NULL
+          );
+          EOF
+
+      - id: action
+        uses: .
+        with:
+          migration-path: tests/fixtures/migrations/*.sql
+          github-token: ${{ github.token }}
+
+      - name: Assert risk-level is GREEN (non-PR context skips analysis)
+        env:
+          RISK: ${{ steps.action.outputs.risk-level }}
+        run: |
+          echo "risk-level: $RISK"
+          if [ "$RISK" != "GREEN" ]; then
+            echo "FAIL: expected risk-level to be GREEN, got '$RISK'"
+            exit 1
+          fi
+          echo "PASS"
+
+      - name: Assert violations is 0 (non-PR context skips analysis)
+        env:
+          VIOLATIONS: ${{ steps.action.outputs.violations }}
+        run: |
+          echo "violations: $VIOLATIONS"
+          if [ "$VIOLATIONS" != "0" ]; then
+            echo "FAIL: expected violations to be 0, got '$VIOLATIONS'"
+            exit 1
+          fi
+          echo "PASS"
