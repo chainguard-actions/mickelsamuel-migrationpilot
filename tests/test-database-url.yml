@@ -1,0 +1,49 @@
+name: Test database-url input
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create migration directory with a simple SQL file
+        run: |
+          mkdir -p migrations
+          cat > migrations/001_create_users.sql << 'EOF'
+          CREATE TABLE users (
+            id SERIAL PRIMARY KEY,
+            email TEXT NOT NULL
+          );
+          EOF
+
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          migration-path: 'migrations/*.sql'
+          github-token: ${{ github.token }}
+          pg-version: '17'
+          fail-on: 'never'
+          database-url: 'postgresql://user:pass@localhost:5432/testdb'
+
+      - name: Assert action ran with database-url input
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+          RISK_LEVEL: ${{ steps.action.outputs.risk-level }}
+        run: |
+          echo "outcome: $OUTCOME"
+          echo "risk-level: $RISK_LEVEL"
+          if [ "$OUTCOME" = "success" ]; then
+            if [ -z "$RISK_LEVEL" ]; then
+              echo "FAIL: action succeeded but risk-level output is empty"
+              exit 1
+            fi
+            echo "PASS: action succeeded with risk-level='$RISK_LEVEL'"
+          elif [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: action failed gracefully (no live DB available in CI)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi

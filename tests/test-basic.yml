@@ -1,0 +1,49 @@
+name: Test basic usage (non-PR context)
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create migration directory with a simple SQL file
+        run: |
+          mkdir -p migrations
+          cat > migrations/001_create_users.sql << 'EOF'
+          CREATE TABLE users (
+            id SERIAL PRIMARY KEY,
+            email TEXT NOT NULL
+          );
+          EOF
+
+      - id: action
+        uses: .
+        with:
+          migration-path: 'migrations/*.sql'
+          github-token: ${{ github.token }}
+          pg-version: '17'
+          fail-on: 'critical'
+
+      - name: Assert risk-level is GREEN (no PR context)
+        env:
+          RISK_LEVEL: ${{ steps.action.outputs.risk-level }}
+        run: |
+          echo "risk-level: $RISK_LEVEL"
+          if [ "$RISK_LEVEL" != "GREEN" ]; then
+            echo "FAIL: expected risk-level=GREEN in non-PR context, got '$RISK_LEVEL'"
+            exit 1
+          fi
+          echo "PASS: risk-level is GREEN"
+
+      - name: Assert violations is 0 (no PR context)
+        env:
+          VIOLATIONS: ${{ steps.action.outputs.violations }}
+        run: |
+          echo "violations: $VIOLATIONS"
+          if [ "$VIOLATIONS" != "0" ]; then
+            echo "FAIL: expected violations=0 in non-PR context, got '$VIOLATIONS'"
+            exit 1
+          fi
+          echo "PASS: violations is 0"

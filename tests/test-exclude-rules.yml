@@ -1,0 +1,43 @@
+name: Test exclude rules input
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create migration directory with SQL files
+        run: |
+          mkdir -p migrations
+          cat > migrations/001_add_index.sql << 'EOF'
+          CREATE INDEX idx_users_email ON users (email);
+          EOF
+
+      - id: action
+        uses: .
+        with:
+          migration-path: 'migrations/*.sql'
+          github-token: ${{ github.token }}
+          pg-version: '15'
+          fail-on: 'critical'
+          exclude: 'MP001,MP004'
+
+      - name: Assert action succeeded with exclude rules
+        env:
+          RISK_LEVEL: ${{ steps.action.outputs.risk-level }}
+          VIOLATIONS: ${{ steps.action.outputs.violations }}
+        run: |
+          echo "risk-level: $RISK_LEVEL"
+          echo "violations: $VIOLATIONS"
+          # In non-PR context, action skips analysis and returns GREEN/0
+          if [ "$RISK_LEVEL" != "GREEN" ]; then
+            echo "FAIL: expected risk-level=GREEN, got '$RISK_LEVEL'"
+            exit 1
+          fi
+          if [ "$VIOLATIONS" != "0" ]; then
+            echo "FAIL: expected violations=0, got '$VIOLATIONS'"
+            exit 1
+          fi
+          echo "PASS: action accepted exclude rules and returned GREEN/0"

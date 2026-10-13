@@ -1,0 +1,42 @@
+name: Test fail-on irreversible option
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create migration directory with a destructive SQL file
+        run: |
+          mkdir -p migrations
+          cat > migrations/001_drop_table.sql << 'EOF'
+          DROP TABLE legacy_data;
+          EOF
+
+      - id: action
+        uses: .
+        with:
+          migration-path: 'migrations/*.sql'
+          github-token: ${{ github.token }}
+          pg-version: '17'
+          fail-on: 'irreversible'
+
+      - name: Assert action ran successfully with fail-on irreversible in non-PR context
+        env:
+          RISK_LEVEL: ${{ steps.action.outputs.risk-level }}
+          VIOLATIONS: ${{ steps.action.outputs.violations }}
+        run: |
+          echo "risk-level: $RISK_LEVEL"
+          echo "violations: $VIOLATIONS"
+          # In non-PR context, action skips analysis and returns GREEN/0
+          if [ "$RISK_LEVEL" != "GREEN" ]; then
+            echo "FAIL: expected risk-level=GREEN in non-PR context, got '$RISK_LEVEL'"
+            exit 1
+          fi
+          if [ "$VIOLATIONS" != "0" ]; then
+            echo "FAIL: expected violations=0 in non-PR context, got '$VIOLATIONS'"
+            exit 1
+          fi
+          echo "PASS: action accepted fail-on=irreversible and returned GREEN/0"
